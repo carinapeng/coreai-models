@@ -7,7 +7,7 @@
 
 from coreai_models.primitives.macos.cache import KVCache, SSMState
 from coreai_models.primitives.macos.mlp import MLP
-from coreai_models.primitives.macos.rms_norm import RMSNorm, RMSNormGated, RMSNormPlusOne
+from coreai_models.primitives.macos.rms_norm import LayerNorm, RMSNorm, RMSNormGated, RMSNormPlusOne
 from coreai_models.primitives.macos.rope import (
     RoPE,
     YarnRoPE,
@@ -18,6 +18,7 @@ from coreai_models.primitives.macos.switch import SwiGLU, SwitchGLU, SwitchLinea
 
 __all__ = [
     "KVCache",
+    "LayerNorm",
     "MLP",
     "RMSNorm",
     "RMSNormGated",

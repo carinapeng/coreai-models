@@ -9,12 +9,16 @@
 #     "coreai-core==1.0.0b1",
 #     "coreai-torch==0.4.0",
 #     "transformers==4.57.3",
+#     "coreai-models",
 # ]
 #
 # [tool.uv]
 # index-url       = "https://pypi.org/simple"
 # prerelease      = "allow"
 # index-strategy  = "unsafe-best-match"
+#
+# [tool.uv.sources]
+# coreai-models = { path = "../../python", editable = true }
 # ///
 import argparse
 import shutil
@@ -127,6 +131,140 @@ def create_whisper(
     print(f"[INFO] Successfully created and saved Core AI model to {model_path}.")
 
 
+def create_whisper_coreai(
+    output_dir: str,
+    model_name: str,
+    dtype: torch.dtype,
+    overwrite: bool,
+) -> None:
+    from coreai_models.export._constants import KEY_CACHE_NAME, VALUE_CACHE_NAME
+    from coreai_models.export.macos import export_to_coreai
+    from coreai_models.models.macos.whisper import WhisperDecoder, WhisperEncoder
+    from coreai_models.primitives.macos.cache import KVCache
+
+    print("[INFO] Loading HuggingFace model for weight extraction...")
+    hf_model = transformers.AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_name, torch_dtype=dtype, use_safetensors=True
+    )
+    cfg = hf_model.config
+
+    d_model = cfg.d_model
+    head_dim = d_model // cfg.encoder_attention_heads
+
+    # ---- encoder ----
+    encoder = WhisperEncoder(
+        num_mel_bins=cfg.num_mel_bins,
+        d_model=d_model,
+        n_heads=cfg.encoder_attention_heads,
+        n_layers=cfg.encoder_layers,
+        ffn_dim=cfg.encoder_ffn_dim,
+        max_source_positions=cfg.max_source_positions,
+    )
+    enc_sd = {
+        k[len("model.encoder.") :]: v
+        for k, v in hf_model.state_dict().items()
+        if k.startswith("model.encoder.")
+    }
+    encoder.load_state_dict(enc_sd, strict=True)
+    encoder = encoder.to(dtype).eval()
+
+    # ---- decoder ----
+    decoder = WhisperDecoder(
+        vocab_size=cfg.vocab_size,
+        d_model=d_model,
+        n_heads=cfg.decoder_attention_heads,
+        n_layers=cfg.decoder_layers,
+        ffn_dim=cfg.decoder_ffn_dim,
+        max_target_positions=cfg.max_target_positions,
+    )
+    dec_sd = {
+        k[len("model.decoder.") :]: v
+        for k, v in hf_model.state_dict().items()
+        if k.startswith("model.decoder.")
+    }
+    decoder.load_state_dict(dec_sd, strict=False)
+    decoder = decoder.to(dtype).eval()
+
+    del hf_model
+
+    # ---- export encoder (static graph, no KV cache) ----
+    print("[INFO] Exporting encoder...")
+    enc_inputs = {"input_features": torch.zeros(1, cfg.num_mel_bins, 3000, dtype=dtype)}
+    enc_program = export_to_coreai(
+        encoder,
+        enc_inputs,
+        input_names=("input_features",),
+        output_names=("encoder_hidden_states",),
+    )
+    enc_program.optimize()
+
+    # ---- export decoder (autoregressive, KV cache as state) ----
+    print("[INFO] Exporting decoder...")
+    # input_ids is always (1, 1) — single token per step — so we make it static.
+    # position_ids grows from length 1 (step 0) to max_target_positions - 1, so it's dynamic.
+    # Trace with a non-trivial offset so torch.export sees offset > 0.
+    _to = 5   # trace offset: position_ids trace length = 1 + _to = 6
+    _tc = 32  # trace KV cache seq len (must be ≤ max_target_positions)
+    _max = cfg.max_target_positions  # 448
+
+    k_cache = torch.zeros(
+        cfg.decoder_layers, 1, cfg.decoder_attention_heads, _tc, head_dim, dtype=dtype
+    )
+    v_cache = torch.zeros(
+        cfg.decoder_layers, 1, cfg.decoder_attention_heads, _tc, head_dim, dtype=dtype
+    )
+    dec_ref = {
+        "input_ids": torch.randint(0, cfg.vocab_size, (1, 1), dtype=torch.int32),
+        "position_ids": torch.arange(1 + _to, dtype=torch.int32).unsqueeze(0),
+        "encoder_hidden_states": torch.zeros(1, cfg.max_source_positions, d_model, dtype=dtype),
+        "k_cache": k_cache,
+        "v_cache": v_cache,
+    }
+    dynamic_shapes = {
+        "input_ids": {},  # always (1, 1) — static
+        "position_ids": {
+            1: torch.export.Dim("dec_pos_len", min=1, max=_max - 1)
+        },
+        "encoder_hidden_states": {},
+        "k_cache": {
+            KVCache.seq_len_dim(): torch.export.Dim(
+                "k_dec_seq_len", min=_tc, max=_max
+            )
+        },
+        "v_cache": {
+            KVCache.seq_len_dim(): torch.export.Dim(
+                "v_dec_seq_len", min=_tc, max=_max
+            )
+        },
+    }
+    dec_program = export_to_coreai(
+        decoder,
+        dec_ref,
+        dynamic_shapes=dynamic_shapes,
+        input_names=("input_ids", "position_ids", "encoder_hidden_states"),
+        output_names=("logits",),
+        state_names=(KEY_CACHE_NAME, VALUE_CACHE_NAME),
+    )
+    dec_program.optimize()
+
+    # ---- save bundle ----
+    bundle_dir = Path(output_dir) / f"{_variant_name(model_name, dtype)}_coreai"
+    if bundle_dir.exists():
+        if not overwrite:
+            raise FileExistsError(
+                f"{bundle_dir} already exists. Pass --overwrite to replace it."
+            )
+        shutil.rmtree(bundle_dir)
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+
+    enc_path = bundle_dir / "encoder.aimodel"
+    dec_path = bundle_dir / "decoder.aimodel"
+    enc_program.save_asset(enc_path, _build_aimodel_metadata())
+    dec_program.save_asset(dec_path, _build_aimodel_metadata())
+    print(f"[INFO] Saved encoder  → {enc_path}")
+    print(f"[INFO] Saved decoder  → {dec_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Create and save a Core AI AIProgram for Whisper."
@@ -153,6 +291,12 @@ def main():
         action="store_true",
         help="Overwrite an existing .aimodel asset at the output path.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["legacy", "coreai"],
+        default="legacy",
+        help="Export mode: 'legacy' uses TorchConverter directly; 'coreai' uses CoreAI primitives.",
+    )
     args = parser.parse_args()
 
     dtype = {
@@ -162,7 +306,11 @@ def main():
     }[args.dtype]
 
     output_dir = args.output_dir or _default_output_dir()
-    create_whisper(output_dir, args.model, dtype, args.overwrite)
+
+    if args.mode == "coreai":
+        create_whisper_coreai(output_dir, args.model, dtype, args.overwrite)
+    else:
+        create_whisper(output_dir, args.model, dtype, args.overwrite)
 
 
 if __name__ == "__main__":

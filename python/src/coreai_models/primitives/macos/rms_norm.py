@@ -53,3 +53,9 @@ class RMSNormGated(torch.nn.Module):
             x = x * torch.nn.functional.silu(gate.to(torch.float32))
             x = x.to(input_dtype)
         return x
+
+
+class LayerNorm(torch.nn.LayerNorm):
+    """Standard LayerNorm (mean+variance normalization). Used by Whisper and similar models."""
+
+    pass

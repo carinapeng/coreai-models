@@ -30,3 +30,6 @@ python/.venv/
 
 # Local settings
 .claude/settings.local.json
+
+# Exported model bundles (large .aimodel artifacts)
+exports/

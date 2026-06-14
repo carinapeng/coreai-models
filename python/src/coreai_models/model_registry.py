@@ -210,6 +210,17 @@ DIFFUSION_PRESETS: list[ModelPreset] = [
         None,
         notes="4bit recommended; use --compression none for full precision",
     ),
+    ModelPreset(
+        "diffusiongemma-26b-a4b-it",
+        "google/diffusion-gemma-26b-a4b-it",
+        "diffusion-gemma",
+        "diffusion",
+        "macOS",
+        "none",
+        "bfloat16",
+        None,
+        notes="4bit compression TBD after validation",
+    ),
 ]
 
 # ---------------------------------------------------------------------------

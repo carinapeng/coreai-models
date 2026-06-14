@@ -114,7 +114,7 @@ public struct EngineFactory: Sendable {
         // Parse override string to variant
         guard let variant = Variant(rawValue: overrideStr) else {
             throw InferenceRuntimeError.unsupportedEngineVariant(
-                "Unknown variant '\(overrideStr)'. Valid: auto, coreai-sequential, coreai-pipelined, static-shape"
+                "Unknown variant '\(overrideStr)'. Valid: auto, coreai-sequential, coreai-pipelined, static-shape, coreai-recompute"
             )
         }
 
@@ -161,6 +161,9 @@ public struct EngineFactory: Sendable {
             return (false, "Core AI pipelined variant requires dynamic model")
         case (.sequential, .chunkedStatic):
             return (false, "Sequential variant requires dynamic model")
+        case (.recompute, _):
+            // Accept any structure; the engine validates its I/O contract at init.
+            return (true, nil)
         default:
             return (true, nil)
         }
@@ -211,6 +214,14 @@ public struct EngineFactory: Sendable {
         case .pipelined:
             CLILogger.log("Creating CoreAI pipelined engine (GPU)")
             return try await CoreAIPipelinedEngine(
+                config: modelConfig,
+                preparedModel: preparedModel,
+                options: options
+            )
+
+        case .recompute:
+            CLILogger.log("Creating CoreAI recompute engine (stateless full re-encode)")
+            return try await CoreAIRecomputeEngine(
                 config: modelConfig,
                 preparedModel: preparedModel,
                 options: options
@@ -294,5 +305,8 @@ extension EngineFactory {
 
         /// Static-shape engine (chunked static, Neural Engine)
         case staticShape = "static-shape"
+
+        /// Stateless full-recompute engine (fixed-shape static-input exports)
+        case recompute = "coreai-recompute"
     }
 }

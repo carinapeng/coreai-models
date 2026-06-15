@@ -506,23 +506,30 @@ class DiffusionGemmaSelfConditioning(nn.Module):
         H = config.hidden_size
         I = config.intermediate_size  # 2112
         self.pre_norm = DiffusionGemmaRMSNorm(H, eps=config.rms_norm_eps)
+        self.post_norm = DiffusionGemmaRMSNorm(H, eps=config.rms_norm_eps, with_scale=False)
         self.gate_proj = nn.Linear(H, I, bias=False)
         self.up_proj = nn.Linear(H, I, bias=False)
         self.down_proj = nn.Linear(I, H, bias=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply self-conditioning residual MLP.
+    def forward(
+        self, inputs_embeds: torch.Tensor, self_conditioning_signal: torch.Tensor
+    ) -> torch.Tensor:
+        """Combine canvas embeddings with the previous step's self-conditioning signal.
 
         Args:
-            x: Canvas embeddings from previous diffusion step [B, canvas_len, H].
+            inputs_embeds: Canvas token embeddings [B, canvas_len, H].
+            self_conditioning_signal: Soft-embeddings derived from the previous
+                denoising step's logits [B, canvas_len, H] (zeros on the first step).
 
         Returns:
-            Updated canvas embeddings [B, canvas_len, H].
+            Fused canvas embeddings [B, canvas_len, H].
         """
-        h = self.pre_norm(x)
-        return x + self.down_proj(
-            F.gelu(self.gate_proj(h), approximate="tanh") * self.up_proj(h)
+        normed = self.pre_norm(self_conditioning_signal)
+        sc_signal = self.down_proj(
+            F.gelu(self.gate_proj(normed), approximate="tanh") * self.up_proj(normed)
         )
+        combined = inputs_embeds + sc_signal
+        return self.post_norm(combined)
 
 
 # ---------------------------------------------------------------------------
@@ -760,17 +767,26 @@ class DiffusionGemmaEncoderForCoreAI(BaseForCausalLM):
 
 
 class DiffusionGemmaDecoderForCoreAI(BaseForCausalLM):
-    """Bidirectional block-diffusion decoder over a fixed 256-token canvas.
+    """Bidirectional block-diffusion decoder over a fixed-length canvas.
 
-    The canvas attends to itself without a causal mask and cross-attends to
-    the encoder-populated KV cache. An optional self-conditioning MLP injects
-    the previous diffusion step's prediction into the canvas embeddings.
+    The canvas attends to itself (bidirectional) and cross-attends to the
+    encoder-populated KV cache. Self-conditioning is folded INTO this graph: the
+    canvas token ids are embedded, combined with the previous denoising step's
+    soft-conditioning signal, and run through the shared transformer.
 
     Exported forward signature:
-        (canvas_embeds[B, 256, H], position_ids[B, 256],
+        (decoder_input_ids[B, canvas],            int32 canvas token ids
+         prev_soft_embeds[B, canvas, H],          soft-cond signal (zeros on step 0)
+         position_ids[B, canvas],                 int32 absolute positions
          encoder_k[n_layers, 1, n_kv, enc_len, hd],
-         encoder_v[n_layers, 1, n_kv, enc_len, hd])
-        -> logits[B, 256, vocab_size]
+         encoder_v[n_layers, 1, n_kv, enc_len, hd],
+         temperature[1])                          per-step diffusion temperature
+        -> (logits[B, canvas, vocab],             processed logits (softcapped / temp)
+            soft_embeds[B, canvas, H])            signal for the NEXT step
+
+    Keeping the vocab-sized softmax @ embedding_table matmul in-graph means the
+    only large tensor crossing the runtime boundary is the (mandatory) logits
+    output; the self-conditioning signal in/out is just [B, canvas, H].
     """
 
     _HF_MODEL_CLASS = None
@@ -778,38 +794,61 @@ class DiffusionGemmaDecoderForCoreAI(BaseForCausalLM):
     @override
     def _init_model(self, config: DiffusionGemmaTextConfig) -> None:
         self.model = DiffusionGemmaSharedTransformer(config, is_encoder=False)
-        # self_conditioning NOT here — exported as DiffusionGemmaSelfConditioningForCoreAI
-        # to avoid unused submodules in this graph.
+        self.self_conditioning = DiffusionGemmaSelfConditioning(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
 
-    @BaseForCausalLM.cast_logits_bfloat16_to_float16
     def forward(
         self,
-        canvas_embeds: torch.Tensor,     # [B, 256, H]
-        position_ids: torch.IntTensor,  # [B, 256]
-        encoder_k: torch.Tensor,     # [n_layers, 1, n_kv, enc_len, hd]
-        encoder_v: torch.Tensor,     # [n_layers, 1, n_kv, enc_len, hd]
-    ) -> torch.Tensor:
-        """Decoder canvas forward pass: bidirectional attention over 256 tokens.
+        decoder_input_ids: torch.Tensor,   # [B, canvas]  int32
+        prev_soft_embeds: torch.Tensor,    # [B, canvas, H]  (zeros on step 0)
+        position_ids: torch.IntTensor,     # [B, canvas]
+        encoder_k: torch.Tensor,           # [n_layers, 1, n_kv, enc_len, hd]
+        encoder_v: torch.Tensor,           # [n_layers, 1, n_kv, enc_len, hd]
+        temperature: torch.Tensor,         # [1]  diffusion temperature for this step
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Canvas denoising step: returns (processed_logits, next_soft_embeds).
 
-        Self-conditioning is a SEPARATE exported model (DiffusionGemmaSelfConditioningForCoreAI).
-        The Swift runner applies it to canvas_embeds before calling this on steps > 0.
+        Self-conditioning combines the canvas embeddings with ``prev_soft_embeds``
+        (the previous step's soft-cond signal). The returned ``soft_embeds`` is
+        ``softmax(processed_logits) @ embed_table * embed_scale``, ready to feed
+        back as ``prev_soft_embeds`` on the next step.
         """
+        embed = self.model.embed_tokens
+        inputs_embeds = embed(decoder_input_ids)                  # [B, canvas, H]
+        fused = self.self_conditioning(inputs_embeds, prev_soft_embeds)
+
         out = self.model(
-            canvas_embeds,
+            fused,
             position_ids,
             cache=None,
             encoder_k_cache=encoder_k,
             encoder_v_cache=encoder_v,
             is_causal=False,
         )
-        logits = self.lm_head(out)
+        raw_logits = self.lm_head(out)
         cap = getattr(self.config, "final_logit_softcapping", 30.0)
         if cap and cap > 0.0:
-            logits = torch.tanh(logits / cap) * cap
-        return logits
+            raw_logits = torch.tanh(raw_logits / cap) * cap
+
+        # Temperature-process the logits (reference applies this before sampling,
+        # entropy, and the self-conditioning soft-embedding).
+        processed = raw_logits / temperature
+
+        # Soft-conditioning signal for the next step: softmax(processed) over the
+        # vocab, mixed back through the (raw) embedding table and the embed scale.
+        soft = torch.matmul(
+            processed.softmax(dim=-1, dtype=torch.float32).to(embed.weight.dtype),
+            embed.weight,
+        ) * float(embed.embed_scale)
+
+        # Logits are consumed by the sampler on the host; emit float16 to match the
+        # encoder export's logits dtype and halve the (mandatory) output bandwidth.
+        if processed.dtype == torch.bfloat16:
+            processed = processed.to(torch.float16)
+
+        return processed, soft
 
     @override
     def _mutate_state_dict(self: Self, state_dict: dict[str, torch.Tensor]) -> None:

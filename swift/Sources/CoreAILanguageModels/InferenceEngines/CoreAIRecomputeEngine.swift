@@ -240,13 +240,56 @@ public final class CoreAIRecomputeEngine: InferenceEngine, @unchecked Sendable {
         with input: [TokenId],
         samplingConfiguration: SamplingConfiguration,
         inferenceOptions: InferenceOptions
-    ) throws -> GenerationSequence {
-        GenerationSequence(
-            engine: self,
-            input: input,
-            samplingConfiguration: samplingConfiguration,
-            inferenceOptions: inferenceOptions
-        )
+    ) throws -> InferenceStream {
+        let (stream, continuation) = InferenceStream.makeStream()
+        Task {
+            self.generating.withLock { $0 = true }
+            defer { self.generating.withLock { $0 = false } }
+            do {
+                let maxTokens: Int
+                if let forced = inferenceOptions.forcedContinuation {
+                    maxTokens = forced.count
+                } else {
+                    maxTokens = min(
+                        inferenceOptions.maxTokens ?? Int.max,
+                        max(0, self.maxLen - input.count)
+                    )
+                }
+                let returnsLogits = inferenceOptions.includeLogits
+                var sequence = input
+
+                for i in 0..<maxTokens {
+                    try Task.checkCancellation()
+                    guard sequence.count <= self.maxLen else { break }
+
+                    let logitBuffer = try await self.forwardLogits(for: sequence)
+
+                    let nextToken: Int32
+                    if let forced = inferenceOptions.forcedContinuation {
+                        nextToken = forced[i]
+                    } else {
+                        var mutableLogits = logitBuffer
+                        nextToken = samplingConfiguration.fallbackSampler(from: &mutableLogits)
+                    }
+
+                    continuation.yield(
+                        InferenceOutput(
+                            tokenId: nextToken,
+                            logits: returnsLogits ? logitBuffer : nil
+                        ))
+                    sequence.append(nextToken)
+                }
+                stream.setStopReason(.maxTokens)
+                continuation.finish()
+            } catch is CancellationError {
+                stream.setStopReason(.cancelled)
+                continuation.finish()
+            } catch {
+                stream.setStopReason(.error)
+                continuation.finish(throwing: error)
+            }
+        }
+        return stream
     }
 
     // MARK: - Lifecycle
@@ -268,141 +311,5 @@ public final class CoreAIRecomputeEngine: InferenceEngine, @unchecked Sendable {
 
     public func cleanup() {
         CLILogger.log("CoreAI recompute engine cleanup complete")
-    }
-}
-
-// MARK: - Generation Sequence
-
-extension CoreAIRecomputeEngine {
-    public struct GenerationSequence: InferenceOutputSequence {
-        public typealias Element = InferenceOutput
-        public typealias Failure = Error
-
-        let engine: CoreAIRecomputeEngine
-        let input: [CoreAIRecomputeEngine.TokenId]
-        let samplingConfiguration: SamplingConfiguration
-        let inferenceOptions: InferenceOptions
-
-        let stopReasonStore = StopReasonStore()
-        public var stopReason: StopReason? { stopReasonStore.stopReason }
-        public func setStopReason(_ reason: StopReason) { stopReasonStore.set(reason) }
-
-        public func makeAsyncIterator() -> Iterator {
-            Iterator(
-                engine: engine,
-                input: input,
-                samplingConfiguration: samplingConfiguration,
-                inferenceOptions: inferenceOptions,
-                stopReasonStore: stopReasonStore
-            )
-        }
-    }
-}
-
-extension CoreAIRecomputeEngine.GenerationSequence {
-    public final class Iterator: AsyncIteratorProtocol {
-        public typealias Element = InferenceOutput
-        public typealias Failure = Error
-
-        private let engine: CoreAIRecomputeEngine
-        private let samplingConfiguration: SamplingConfiguration
-        private let returnsLogits: Bool
-        private let forcedContinuation: [CoreAIRecomputeEngine.TokenId]?
-        private let maxTokens: Int
-        private let stopReasonStore: StopReasonStore
-
-        // The full running sequence (prompt + everything generated so far).
-        private var sequence: [CoreAIRecomputeEngine.TokenId]
-        private var step: Int = 0
-        private var didAcquireLock: Bool = false
-        private var finished: Bool = false
-
-        init(
-            engine: CoreAIRecomputeEngine,
-            input: [CoreAIRecomputeEngine.TokenId],
-            samplingConfiguration: SamplingConfiguration,
-            inferenceOptions: InferenceOptions,
-            stopReasonStore: StopReasonStore
-        ) {
-            self.engine = engine
-            self.samplingConfiguration = samplingConfiguration
-            self.returnsLogits = inferenceOptions.includeLogits
-            self.forcedContinuation = inferenceOptions.forcedContinuation
-            self.stopReasonStore = stopReasonStore
-            self.sequence = input
-            if let forced = inferenceOptions.forcedContinuation {
-                self.maxTokens = forced.count
-            } else {
-                self.maxTokens = Swift.min(
-                    inferenceOptions.maxTokens ?? Int.max,
-                    Swift.max(0, engine.maxLen - input.count)
-                )
-            }
-        }
-
-        deinit {
-            if didAcquireLock {
-                engine.generating.withLock { $0 = false }
-            }
-        }
-
-        public func next() async throws -> InferenceOutput? {
-            if finished { return nil }
-
-            if !didAcquireLock {
-                engine.generating.withLock { $0 = true }
-                didAcquireLock = true
-            }
-
-            guard step < maxTokens else {
-                stopReasonStore.setIfUnset(.maxTokens)
-                finishAndRelease()
-                return nil
-            }
-            guard sequence.count <= engine.maxLen else {
-                stopReasonStore.setIfUnset(.maxTokens)
-                finishAndRelease()
-                return nil
-            }
-
-            do {
-                try Task.checkCancellation()
-
-                let logitBuffer = try await engine.forwardLogits(for: sequence)
-
-                let nextToken: Int32
-                if let forced = forcedContinuation {
-                    nextToken = forced[step]
-                } else {
-                    var mutableLogits = logitBuffer
-                    nextToken = samplingConfiguration.fallbackSampler(from: &mutableLogits)
-                }
-
-                sequence.append(nextToken)
-                step += 1
-
-                return InferenceOutput(
-                    tokenId: nextToken,
-                    logits: returnsLogits ? logitBuffer : nil
-                )
-            } catch is CancellationError {
-                stopReasonStore.set(.cancelled)
-                finishAndRelease()
-                throw CancellationError()
-            } catch {
-                stopReasonStore.set(.error)
-                finishAndRelease()
-                throw error
-            }
-        }
-
-        private func finishAndRelease() {
-            guard !finished else { return }
-            finished = true
-            if didAcquireLock {
-                engine.generating.withLock { $0 = false }
-                didAcquireLock = false
-            }
-        }
     }
 }

@@ -63,8 +63,43 @@ from coreai_models.models.macos.diffusion_gemma_config import (
     DiffusionGemmaTextConfig,
 )
 from coreai_models.primitives.macos.cache import KVCache
+from coreai_models.primitives._ops import mutable_slice_update
 from coreai_models.primitives.macos.sdpa import SDPA
 from coreai_models.primitives.macos.switch import SwitchGLU
+
+
+def _update_cache_subregion(
+    cache: "KVCache",
+    layer_idx: int,
+    offset: int,
+    k: torch.Tensor,            # [B, n_kv, T, hd]  native per-layer dims
+    v: torch.Tensor,
+    seq_len: int,
+    n_kv: int,
+    hd: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Write native-sized K/V into a sub-region of the unified cache
+    """
+    kc, vc = cache._k_cache, cache._v_cache  # [L, 1, cache_n_kv, ctx, cache_hd]
+    device = kc.device
+    T = k.shape[-2]
+
+    def _write(buf: torch.Tensor, upd: torch.Tensor) -> None:
+        # upd: [B, n_kv, T, hd] -> [1(layer), B, n_kv, T, hd]
+        begin = torch.tensor((layer_idx, 0, 0, offset, 0), dtype=torch.int32, device=device)
+        end = torch.tensor(
+            (layer_idx + 1, buf.size(1), n_kv, offset + T, hd),
+            dtype=torch.int32, device=device,
+        )
+        mutable_slice_update(x=buf, update=upd.unsqueeze(0), begin=begin, end=end)
+
+    _write(kc, k)
+    _write(vc, v)
+
+    # Read back accumulated K/V for this layer: [1, B, n_kv, seq_len, hd] -> [B, n_kv, seq_len, hd]
+    k_out = kc.narrow(0, layer_idx, 1).narrow(2, 0, n_kv).narrow(-2, 0, seq_len).narrow(-1, 0, hd).squeeze(0)
+    v_out = vc.narrow(0, layer_idx, 1).narrow(2, 0, n_kv).narrow(-2, 0, seq_len).narrow(-1, 0, hd).squeeze(0)
+    return k_out, v_out
 
 
 # RMSNorm
@@ -306,21 +341,12 @@ class DiffusionGemmaAttention(nn.Module):
         value = value.transpose(1, 2)  # [B, n_kv, T, hd]
 
         # -- KV cache or encoder cross-attention context ---------------------
-        pad_hd = self.cache_head_dim - hd
-        pad_kv = self.cache_n_kv_heads - n_kv
-
         if cache is not None and is_causal:
-            # Encoder pass: update cache and read back accumulated K/V.
-            # F.pad pads from the last dim backwards: (hd_lo, hd_hi, T_lo, T_hi, kv_lo, kv_hi)
-            k_pad = F.pad(key, (0, pad_hd, 0, 0, 0, pad_kv)) if (pad_hd or pad_kv) else key
-            v_pad = F.pad(value, (0, pad_hd, 0, 0, 0, pad_kv)) if (pad_hd or pad_kv) else value
-            k_pad, v_pad = cache.update_and_fetch(
-                self.layer_idx, offset, k_pad, v_pad,
-                seq_len=seq_len, query_len=T,
+            # Encoder pass
+            key, value = _update_cache_subregion(
+                cache, self.layer_idx, offset, key, value,
+                seq_len=seq_len, n_kv=n_kv, hd=hd,
             )
-            # Unpad back to this layer's actual n_kv and head_dim.
-            key = k_pad[:, :n_kv, :, :hd]
-            value = v_pad[:, :n_kv, :, :hd]
         elif encoder_k is not None and encoder_v is not None:
             # Decoder pass: prepend per-layer encoder context to canvas K/V.
             enc_k_layer = encoder_k[:, :n_kv, :, :hd]

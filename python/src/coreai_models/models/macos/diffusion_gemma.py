@@ -695,19 +695,6 @@ class DiffusionGemmaDecoderForCoreAI(BaseForCausalLM):
 DiffusionGemmaForCoreAI = DiffusionGemmaEncoderForCoreAI
 
 
-class DiffusionGemmaSelfConditioningForCoreAI(nn.Module):
-    """Self-conditioning MLP exported as a separate .aimodel (optional path)."""
-
-    def __init__(self, config: DiffusionGemmaTextConfig) -> None:
-        super().__init__()
-        self.self_conditioning = DiffusionGemmaSelfConditioning(config)
-
-    def forward(
-        self, inputs_embeds: torch.Tensor, self_conditioning_signal: torch.Tensor
-    ) -> torch.Tensor:
-        return self.self_conditioning(inputs_embeds, self_conditioning_signal)
-
-
 # ---------------------------------------------------------------------------
 # Weight-key mutation helper
 # ---------------------------------------------------------------------------

@@ -79,11 +79,13 @@ struct LLMRunner: AsyncParsableCommand, Sendable {
     @Option(name: .customLong("raw-tokens"), help: "JSON file with pre-tokenized tokens: {\"tokens\": [...]}")
     var rawTokens: String?
 
-    @Flag(name: .customLong("diffusion"), help: "Run a DiffusionGemma bundle via the block-diffusion loop")
+    @Flag(
+        name: .customLong("diffusion"),
+        help: "Force the DiffusionGemma block-diffusion runner (normally auto-detected from metadata)")
     var diffusion: Bool = false
 
-    @Option(name: .customLong("max-steps"), help: "Diffusion denoising steps (default: 16)")
-    var maxSteps: Int = 16
+    @Option(name: .customLong("diffusion-max-steps"), help: "Diffusion denoising steps (default: 16)")
+    var diffusionMaxSteps: Int = 16
 
     @Option(help: "Maximum number of tokens to generate (default: 50)")
     var maxTokens: Int = 50
@@ -241,17 +243,30 @@ struct LLMRunner: AsyncParsableCommand, Sendable {
         // Test signpost right at the start
         InstrumentsProfiler.logMemoryUsage(phase: "AppStart")
 
-        if diffusion {
+        if diffusion || Self.isDiffusionBundle(resolvedPath) {
             try await DiffusionGemmaRunner.run(
                 bundleDir: resolvedPath,
                 prompt: prompt ?? "What is the capital of France?",
-                maxSteps: maxSteps,
+                maxSteps: diffusionMaxSteps,
                 verbose: verboseLevel > 0
             )
             return
         }
 
         try await runModel(path: resolvedPath, resolver: resolver)
+    }
+
+    /// Detects a DiffusionGemma bundle from `metadata.json` (`kind == "diffusion_llm"`),
+    /// so the block-diffusion runner is selected without an explicit flag.
+    static func isDiffusionBundle(_ path: String) -> Bool {
+        let metaURL = URL(fileURLWithPath: path).appendingPathComponent("metadata.json")
+        guard let data = try? Data(contentsOf: metaURL),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let kind = obj["kind"] as? String
+        else {
+            return false
+        }
+        return kind == "diffusion_llm"
     }
 
     func validateAndResolveModelPath(resolver: ModelPaths) throws -> String {

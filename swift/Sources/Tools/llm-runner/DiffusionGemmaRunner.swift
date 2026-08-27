@@ -19,25 +19,24 @@ import Tokenizers
 /// argmax canvas is stable and confident.
 ///
 /// All tensor shapes (layers, KV heads, head_dim, hidden size, canvas length,
-/// vocab) are read from the exported function descriptors; only the diffusion
-/// hyperparameters and the chat format are constants. The encoder and decoder
-/// must be static-shape exports (see `export_diffusion_gemma.py --static-encoder`):
-/// the encoder is exported for a fixed prompt length, so the prompt must
-/// tokenize to exactly that many tokens.
+/// vocab) are read from the exported function descriptors, and the chat format,
+/// BOS, and EOS come from the bundle tokenizer; only the diffusion
+/// hyperparameters are constants. The encoder and decoder must be static-shape
+/// exports (see `export_diffusion_gemma.py --static-encoder`): the encoder is
+/// exported for a fixed prompt length, so the prompt must tokenize to exactly
+/// that many tokens.
+///
+/// NOTE: this is a self-contained generation path. It does not yet integrate
+/// with the shared `InferenceEngine` / Foundation Models generation stack, whose
+/// interfaces are autoregressive-token-streaming oriented; block diffusion emits
+/// a whole canvas per step, so first-class integration needs a diffusion-aware
+/// generation interface (tracked as follow-up).
 enum DiffusionGemmaRunner {
     // Diffusion hyperparameters (defaults from the checkpoint generation_config).
     static let tMax: Float = 0.8
     static let tMin: Float = 0.4
     static let entropyBound: Float = 0.1
     static let confidenceThreshold: Float = 0.005
-    // DiffusionGemma chat format and beginning-of-sequence token.
-    static let bosToken = 2
-    static let eosToken: Int32 = 1
-    static let endOfTurnToken: Int32 = 106
-
-    static func chatFormat(_ prompt: String) -> String {
-        "<|turn>user\n\(prompt)<turn|>\n<|turn>model\n"
-    }
 
     static func run(
         bundleDir: String,
@@ -52,7 +51,9 @@ enum DiffusionGemmaRunner {
         let dir = URL(fileURLWithPath: bundleDir, isDirectory: true)
         let tokenizer = try await AutoTokenizer.from(
             modelFolder: dir.appendingPathComponent("tokenizer"))
-        let ids = [bosToken] + tokenizer.encode(text: chatFormat(prompt), addSpecialTokens: false)
+        // Prompt format and special tokens come from the tokenizer's chat template.
+        let ids = try tokenizer.applyChatTemplate(
+            messages: [["role": "user", "content": prompt]])
         let encLen = ids.count
 
         let encFn = try await loadMainFunction(at: dir.appendingPathComponent("encoder.aimodel"))
@@ -145,13 +146,15 @@ enum DiffusionGemmaRunner {
             if stable && meanH < confidenceThreshold { break }
         }
 
-        // Return the most-confident step's canvas, trimmed at end-of-turn / eos.
+        // Return the most-confident step's canvas, trimmed at the tokenizer's EOS.
+        // Special tokens (channel/turn markers) are skipped by the decoder.
+        let eos = tokenizer.eosTokenId.map { Int32($0) }
         var finalIds: [Int] = []
         for t in bestArgmax {
-            if t == eosToken || t == endOfTurnToken { break }
+            if let eos, t == eos { break }
             if t != 0 { finalIds.append(Int(t)) }
         }
-        print(tokenizer.decode(tokens: finalIds))
+        print(tokenizer.decode(tokens: finalIds, skipSpecialTokens: true))
     }
 
     // MARK: - Decoder step

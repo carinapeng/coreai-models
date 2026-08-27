@@ -11,126 +11,62 @@ torch.export -> decompose -> defunctionalize -> TorchConverter -> optimize.
 """
 
 import logging
+from typing import Any
 
 import coreai_torch
-import coreai_torch.composite_ops
 import torch
 from coreai.authoring import AIProgram
 
-from coreai_models.export._constants import (
-    KEY_CACHE_NAME,
-    QUANT_TRACE_OFFSET,
-    QUANT_TRACE_QUERY_LEN,
+from coreai_models._constants import (
+    DEFAULT_INCLUDE_DEBUG_INFO,
+    MAIN_GRAPH_NAME,
     TRACE_KV_CACHE_SEQ_LEN,
-    VALUE_CACHE_NAME,
+)
+from coreai_models.export.externalize import (
+    EXTERNALIZE_SPECS,
+    subexport_and_restore,
 )
 from coreai_models.export.mlir_ops import (
     register_custom_torch_lowering,
     remove_functionalization,
 )
-from coreai_models.primitives.macos.cache import KVCache
+from coreai_models.models.base import BaseForCausalLM, TraceSpec
 
 logger = logging.getLogger(__name__)
 
-# Composite ops that are externalized (kept as named composites in the MLIR graph
-# rather than being inlined/decomposed).
-_EXTERNALIZE_SPECS = [
-    coreai_torch.ExternalizeSpec(
-        target_class=coreai_torch.composite_ops.GatherMM,
-        composite_op_name="gather_mm",
-        composite_attrs=["num_batch_axes"],
-    ),
-    coreai_torch.ExternalizeSpec(
-        target_class=coreai_torch.composite_ops.RMSNormImpl,
-        composite_op_name="rms_norm",
-        composite_attrs=["axes", "eps"],
-    ),
-    coreai_torch.ExternalizeSpec(
-        target_class=coreai_torch.composite_ops.RoPE,
-        composite_op_name="rope",
-        composite_attrs=["scale", "base", "dims", "interleaved"],
-    ),
-    coreai_torch.ExternalizeSpec(
-        target_class=coreai_torch.composite_ops.SDPA,
-        composite_op_name="scaled_dot_product_attention",
-        composite_attrs=["scale", "is_causal", "window_size"],
-    ),
-    coreai_torch.ExternalizeSpec(
-        target_class=coreai_torch.composite_ops.GatedDeltaUpdate,
-        composite_op_name="gated_delta_update",
-        composite_attrs=[],
-    ),
-]
-
 
 def _build_reference_inputs(
-    model: torch.nn.Module,
+    model: BaseForCausalLM,
     config,
     target_dtype: torch.dtype,
     max_context_length: int,
-) -> tuple[dict[str, torch.Tensor], dict]:
-    """Build reference inputs and dynamic shapes for macOS model export.
+) -> tuple[dict[str, Any], dict]:
+    """Reference inputs and dynamic shapes for macOS export.
 
-    Args:
-        model: The PyTorch model (used only to read config).
-        config: HuggingFace model config.
-        target_dtype: Data type for cache tensors.
-        max_context_length: Maximum context length for the model.
-
-    Returns:
-        Tuple of (reference_inputs dict, dynamic_shapes dict).
+    Thin wrapper over the model's export-contract hooks, where the per-model variation
+    lives. Returns ``(reference_inputs, dynamic_shapes)``.
     """
-    batch_size = 1
-    vocab_size = config.vocab_size
-
-    input_ids = torch.randint(1, vocab_size, (batch_size, QUANT_TRACE_QUERY_LEN), dtype=torch.int32)
-    position_ids = (
-        torch.arange(QUANT_TRACE_QUERY_LEN + QUANT_TRACE_OFFSET, dtype=torch.int32)
-        .unsqueeze(0)
-        .expand(batch_size, QUANT_TRACE_QUERY_LEN + QUANT_TRACE_OFFSET)
+    # The trace cache length only bounds peak memory, so cap it at the context it serves.
+    spec = TraceSpec(
+        max_context_length=max_context_length,
+        cache_seq_len=min(TRACE_KV_CACHE_SEQ_LEN, max_context_length),
     )
-
-    # Clamp `max_position_embeddings` so KVCache.create_cache_tensors doesn't
-    # allocate a full-context cache for huge models
-    saved_max_pos = config.max_position_embeddings
-    config.max_position_embeddings = TRACE_KV_CACHE_SEQ_LEN
-    k_cache, v_cache = KVCache.create_cache_tensors(config, dtype=target_dtype)
-    config.max_position_embeddings = saved_max_pos
-
-    reference_inputs = {
-        "input_ids": input_ids,
-        "position_ids": position_ids,
-        "k_cache": k_cache,
-        "v_cache": v_cache,
-    }
-
-    dynamic_shapes = {
-        "input_ids": {1: torch.export.Dim("seq_ids", max=max_context_length - 2)},
-        "position_ids": {
-            1: torch.export.Dim("seq_pos", min=QUANT_TRACE_QUERY_LEN, max=max_context_length - 1)
-        },
-        "k_cache": {
-            KVCache.seq_len_dim(): torch.export.Dim(
-                "k_seq_len", min=TRACE_KV_CACHE_SEQ_LEN, max=max_context_length
-            )
-        },
-        "v_cache": {
-            KVCache.seq_len_dim(): torch.export.Dim(
-                "v_seq_len", min=TRACE_KV_CACHE_SEQ_LEN, max=max_context_length
-            )
-        },
-    }
-
-    return reference_inputs, dynamic_shapes
+    reference_inputs = model.build_reference_inputs(config, target_dtype, spec)
+    dynamic_shapes = model.build_dynamic_shapes(config, spec)
+    model.validate_export_contract(reference_inputs, dynamic_shapes)
+    # A macOS model has exactly one graph.
+    return reference_inputs[MAIN_GRAPH_NAME], dynamic_shapes[MAIN_GRAPH_NAME]
 
 
 def export_to_coreai(
     model: torch.nn.Module,
-    reference_inputs: dict[str, torch.Tensor],
+    reference_inputs: dict[str, Any],
     dynamic_shapes: dict | None = None,
     input_names: tuple[str, ...] | None = None,
     output_names: tuple[str, ...] | None = None,
     state_names: tuple[str, ...] | None = None,
+    externalized_model: torch.nn.Module | None = None,
+    include_debug_info: bool = DEFAULT_INCLUDE_DEBUG_INFO,
 ) -> AIProgram:
     """Export a stateful macOS model to a AIProgram.
 
@@ -157,6 +93,13 @@ def export_to_coreai(
         state_names: Names of inputs that are state (i.e. mutated in place by
             the forward pass and surfaced via the runtime ``state=`` kwarg
             rather than as regular inputs/outputs).
+        externalized_model: The eager module whose composite-op submodules were marked
+            by ``patch_model_for_externalization`` before ``model`` was produced.
+            Required when ``model`` is a flattened ``torch.fx.GraphModule``, and
+            unused when it is an eager module.
+        include_debug_info: When True, the converter runs in ``DEBUG`` mode and embeds debug
+            information in the exported ``.aimodel``. Defaults to ``RELEASE`` mode,
+            which embeds minimum debug information and makes the exported asset smaller.
 
     Returns:
         A AIProgram ready for optimization and compilation.
@@ -169,12 +112,19 @@ def export_to_coreai(
         state_names_set = set(state_names or ())
         input_names = tuple(k for k in reference_inputs if k not in state_names_set)
 
-    def export_fn(module: torch.nn.Module) -> torch.export.ExportedProgram:
+    def export_fn(
+        module: torch.nn.Module, pass_inputs_as_kwargs: bool = True
+    ) -> torch.export.ExportedProgram:
+        # A module unlifted from an ExportedProgram only accepts the calling convention
+        # it was captured with, and graph-mode compression captures positionally.
+        # `reference_inputs` is insertion-ordered to match the forward signature.
+        export_args = () if pass_inputs_as_kwargs else tuple(reference_inputs.values())
+        export_kwargs = reference_inputs if pass_inputs_as_kwargs else None
         with torch.no_grad():
             aten_exported_program = torch.export.export(
                 module,
-                args=(),
-                kwargs=reference_inputs,
+                args=export_args,
+                kwargs=export_kwargs,
                 dynamic_shapes=dynamic_shapes,
             )
         coreai_decomp_table = coreai_torch.get_decomp_table()
@@ -182,24 +132,55 @@ def export_to_coreai(
         remove_functionalization(coreaten_exported_program)
         return coreaten_exported_program
 
-    model.eval()
-    converter = coreai_torch.TorchConverter()
-    converter.add_pytorch_module(
-        model,
-        export_fn=export_fn,
-        externalize_modules=_EXTERNALIZE_SPECS,
-        input_names=input_names,
-        output_names=output_names,
-        state_names=state_names,
+    mode = (
+        coreai_torch.TorchConverter.Mode.DEBUG
+        if include_debug_info
+        else coreai_torch.TorchConverter.Mode.RELEASE
     )
+    converter = coreai_torch.TorchConverter(mode=mode)
+
+    # GraphModule subclasses nn.Module, so this specific check has to come first
+    if isinstance(model, torch.fx.GraphModule):
+        if externalized_model is None:
+            raise ValueError(
+                "A flattened torch.fx.GraphModule needs an externalized_model handle. "
+                "Call patch_model_for_externalization on the model before quantization."
+            )
+        exported_program = export_fn(model, pass_inputs_as_kwargs=False)
+        externalized_programs = subexport_and_restore(externalized_model, exported_program)
+
+        converter.add_exported_program(
+            exported_program,
+            input_names=input_names,
+            output_names=output_names,
+            state_names=state_names,
+            _externalized_exported_programs=externalized_programs,  # type: ignore[call-arg]
+        )
+    elif isinstance(model, torch.nn.Module):
+        model.eval()
+        converter.add_pytorch_module(
+            model,
+            export_fn=export_fn,
+            externalize_modules=EXTERNALIZE_SPECS,
+            input_names=input_names,
+            output_names=output_names,
+            state_names=state_names,
+        )
+    else:
+        raise TypeError(
+            "model must be a torch.nn.Module (eager-mode) or torch.fx.GraphModule "
+            f"(graph-mode), got {type(model).__name__}."
+        )
+
     register_custom_torch_lowering(converter)
     return converter.to_coreai()
 
 
 def export_macos_model(
-    model: torch.nn.Module,
+    model: BaseForCausalLM,
     config,
     export_config,
+    externalized_model: BaseForCausalLM | None = None,
 ) -> AIProgram:
     """Export a macOS model to a AIProgram.
 
@@ -209,9 +190,14 @@ def export_macos_model(
     3. Optimizes the resulting AIProgram
 
     Args:
-        model: A loaded PyTorch model (already in the correct dtype).
+        model: A loaded PyTorch model (already in the correct dtype). Under
+            graph-mode quantization this is the flattened ``torch.fx.GraphModule``,
+            and the contract is read off ``externalized_model`` instead.
         config: HuggingFace model config (used for cache dimensions, vocab size, etc.).
         export_config: An ExportConfig instance (used for max_context_length, etc.).
+        externalized_model: The eager module marked by
+            ``patch_model_for_externalization`` before ``model`` was produced.
+            See ``export_to_coreai``.
 
     Returns:
         An optimized AIProgram ready for MLIR quantization and compilation.
@@ -220,29 +206,33 @@ def export_macos_model(
     if max_context_length is None:
         max_context_length = getattr(config, "max_position_embeddings", 2048)
 
-    # Determine target dtype from the model parameters
-    target_dtype = next(model.parameters()).dtype
+    # Graph-mode quantization flattens the model into a torch.fx.GraphModule, which
+    # carries none of the export-contract hooks. `externalized_model` is the eager
+    # module that graph was captured from, so query the contract there.
+    contract_model = model if externalized_model is None else externalized_model
+
+    from coreai_models.export.pipeline import _resolve_precision
+
+    target_dtype = _resolve_precision(export_config.compute_precision)
 
     logger.info(
         f"Exporting macOS model (dtype={target_dtype}, max_context_length={max_context_length})"
     )
 
     reference_inputs, dynamic_shapes = _build_reference_inputs(
-        model, config, target_dtype, max_context_length
+        contract_model, config, target_dtype, max_context_length
     )
-
-    input_names = ("input_ids", "position_ids")
-    output_names = ("logits",)
-    state_names = (KEY_CACHE_NAME, VALUE_CACHE_NAME)
 
     logger.info("Exporting model to Core AI dialect...")
     coreai_program = export_to_coreai(
         model,
         reference_inputs,
         dynamic_shapes=dynamic_shapes,
-        input_names=input_names,
-        output_names=output_names,
-        state_names=state_names,
+        input_names=contract_model.export_input_names()[MAIN_GRAPH_NAME],
+        output_names=contract_model.export_output_names()[MAIN_GRAPH_NAME],
+        state_names=contract_model.export_state_names()[MAIN_GRAPH_NAME],
+        include_debug_info=getattr(export_config, "include_debug_info", DEFAULT_INCLUDE_DEBUG_INFO),
+        externalized_model=externalized_model,
     )
 
     logger.info("Optimizing AIProgram...")

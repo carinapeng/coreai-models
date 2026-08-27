@@ -251,7 +251,7 @@ def _quantize_encoder(encoder, compression, dtype):
     The encoder's forward contract (input_ids, position_ids, k_cache, v_cache) is
     identical to a standard LLM, so the shared quantization preset applies.
     """
-    from coreai_models.export._constants import (
+    from coreai_models._constants import (
         QUANT_TRACE_OFFSET,
         QUANT_TRACE_QUERY_LEN,
         TRACE_KV_CACHE_SEQ_LEN,

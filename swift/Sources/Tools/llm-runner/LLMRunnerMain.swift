@@ -79,6 +79,15 @@ struct LLMRunner: AsyncParsableCommand, Sendable {
     @Option(name: .customLong("raw-tokens"), help: "JSON file with pre-tokenized tokens: {\"tokens\": [...]}")
     var rawTokens: String?
 
+    @Flag(name: .customLong("diffusion"), help: "Run a DiffusionGemma bundle via the block-diffusion loop")
+    var diffusion: Bool = false
+
+    @Option(name: .customLong("canvas-length"), help: "Diffusion canvas length (default: 32)")
+    var canvasLength: Int = 32
+
+    @Option(name: .customLong("max-steps"), help: "Diffusion denoising steps (default: 16)")
+    var maxSteps: Int = 16
+
     @Option(help: "Maximum number of tokens to generate (default: 50)")
     var maxTokens: Int = 50
 
@@ -234,6 +243,16 @@ struct LLMRunner: AsyncParsableCommand, Sendable {
 
         // Test signpost right at the start
         InstrumentsProfiler.logMemoryUsage(phase: "AppStart")
+
+        if diffusion {
+            try await DiffusionGemmaRunner.run(
+                bundleDir: resolvedPath,
+                prompt: prompt ?? "What is the capital of France?",
+                canvasLength: canvasLength,
+                maxSteps: maxSteps
+            )
+            return
+        }
 
         try await runModel(path: resolvedPath, resolver: resolver)
     }

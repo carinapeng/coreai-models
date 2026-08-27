@@ -73,6 +73,7 @@ def export_diffusion_gemma(
     compute_precision: str = "bfloat16",
     encoder_only: bool = False,
     enc_len: int = _TRACE_ENC_CTX,
+    static_encoder: bool = False,
 ) -> str:
     """Export DiffusionGemma to a Core AI bundle."""
     dtype = _resolve_dtype(compute_precision)
@@ -94,22 +95,40 @@ def export_diffusion_gemma(
     if compression and compression != "none":
         encoder = _quantize_encoder(encoder, compression, dtype)
 
-    export_cfg = ExportConfig(
-        hf_model_id=hf_model_id,
-        max_context_length=max_ctx,
-        compute_precision=compute_precision,
-        compression=compression,
-    )
-    # Pass the encoder as `config` too: _build_reference_inputs reads the unified
-    # cache dims (num_key_value_heads=8, head_dim=512, num_hidden_layers) off it.
-    enc_prog = export_macos_model(encoder, encoder, export_cfg)
-    enc_path = bundle / "encoder.aimodel"
-    _rm(enc_path, overwrite)
-    enc_prog.save_asset(enc_path, meta)
-
     n_layers_eff = encoder.config.num_hidden_layers
     cache_n_kv = encoder.num_key_value_heads
     cache_hd = encoder.head_dim
+    enc_path = bundle / "encoder.aimodel"
+    _rm(enc_path, overwrite)
+
+    if static_encoder:
+        # Static-shape prefill encoder (fixed sequence length = enc_len). MPSGraph's
+        # dynamic shape-function inference crashes in the Swift runtime on the dynamic
+        # graph, so the Swift runner requires a static export. The cache is sized to
+        # enc_len and surfaced as keyCache/valueCache state.
+        ids0 = torch.zeros(1, enc_len, dtype=torch.int32)
+        pos0 = torch.arange(enc_len, dtype=torch.int32).unsqueeze(0)
+        kc = torch.zeros(n_layers_eff, 1, cache_n_kv, enc_len, cache_hd, dtype=dtype)
+        vc = torch.zeros_like(kc)
+        enc_prog = export_to_coreai(
+            encoder,
+            {"input_ids": ids0, "position_ids": pos0, "k_cache": kc, "v_cache": vc},
+            dynamic_shapes=None,
+            input_names=("input_ids", "position_ids"),
+            output_names=("logits",),
+            state_names=("keyCache", "valueCache"),
+        )
+    else:
+        export_cfg = ExportConfig(
+            hf_model_id=hf_model_id,
+            max_context_length=max_ctx,
+            compute_precision=compute_precision,
+            compression=compression,
+        )
+        # Pass the encoder as `config` too: _build_reference_inputs reads the unified
+        # cache dims (num_key_value_heads=8, head_dim=512, num_hidden_layers) off it.
+        enc_prog = export_macos_model(encoder, encoder, export_cfg)
+    enc_prog.save_asset(enc_path, meta)
     del encoder
 
     if encoder_only:
@@ -362,6 +381,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Export only the encoder (a complete autoregressive LM).",
     )
+    parser.add_argument(
+        "--static-encoder",
+        action="store_true",
+        help="Export a static-shape (fixed enc-len) prefill encoder. Required for the Swift "
+        "llm-runner, whose MPSGraph path does not support the dynamic-shape encoder.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser
@@ -385,6 +410,7 @@ def main() -> None:
         compute_precision=args.compute_precision,
         encoder_only=args.encoder_only,
         enc_len=args.enc_len,
+        static_encoder=args.static_encoder,
     )
     print(f"Export complete: {result}")
 

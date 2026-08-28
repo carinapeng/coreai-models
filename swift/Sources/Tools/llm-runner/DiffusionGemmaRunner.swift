@@ -4,6 +4,7 @@
 // be found in the LICENSE file or at https://opensource.org/licenses/BSD-3-Clause
 
 import CoreAI
+import CoreAILanguageModels
 import CoreAIShared
 import Foundation
 import Tokenizers
@@ -121,7 +122,8 @@ enum DiffusionGemmaRunner {
 
         for step in stride(from: maxSteps, through: 1, by: -1) {
             let tStep = Date()
-            let temp = tMin + (tMax - tMin) * (Float(step) / Float(maxSteps))
+            let temp = DiffusionSampler.temperature(
+                step: step, maxSteps: maxSteps, tMin: tMin, tMax: tMax)
             let (processed, softOut) = try await runDecoder(
                 decFn, decDesc, canvas: canvas, soft: soft, encLen: encLen,
                 canvasLength: canvasLength, hiddenSize: hiddenSize,
@@ -129,8 +131,12 @@ enum DiffusionGemmaRunner {
             soft = softOut
             stepsRun += 1
 
-            let argmaxCanvas = (0..<canvasLength).map { argmaxRow(processed, row: $0, vocab: vocab) }
-            let entropies = (0..<canvasLength).map { entropyRow(processed, row: $0, vocab: vocab) }
+            let argmaxCanvas = (0..<canvasLength).map {
+                DiffusionSampler.argmaxRow(processed, row: $0, vocab: vocab)
+            }
+            let entropies = (0..<canvasLength).map {
+                DiffusionSampler.entropyRow(processed, row: $0, vocab: vocab)
+            }
             let (accepted, next) = acceptAndRenoise(processed, entropies: entropies, current: canvas, vocab: vocab)
             canvas = next
 
@@ -216,22 +222,18 @@ enum DiffusionGemmaRunner {
     // MARK: - Sampler
 
     /// Entropy-bound acceptance + renoising. Accepts the lowest-entropy positions
-    /// whose cumulative (excluding self) entropy stays within `entropyBound`,
-    /// samples those from the denoiser, and re-randomizes the rest.
+    /// (via `DiffusionSampler.acceptMask`), samples those from the denoiser, and
+    /// re-randomizes the rest.
     private static func acceptAndRenoise(
         _ logits: [Float], entropies: [Float], current: [Int32], vocab: Int
     ) -> (accepted: Int, next: [Int32]) {
-        let n = current.count
-        let order = (0..<n).sorted { entropies[$0] < entropies[$1] }
-        var accept = [Bool](repeating: false, count: n)
-        var cum: Float = 0
-        for idx in order {
-            if cum <= entropyBound { accept[idx] = true }
-            cum += entropies[idx]
-        }
-        var next = [Int32](repeating: 0, count: n)
-        for i in 0..<n {
-            next[i] = accept[i] ? sampleRow(logits, row: i, vocab: vocab) : Int32.random(in: 0..<Int32(vocab))
+        let accept = DiffusionSampler.acceptMask(entropies: entropies, bound: entropyBound)
+        var next = [Int32](repeating: 0, count: current.count)
+        for i in 0..<current.count {
+            next[i] =
+                accept[i]
+                ? DiffusionSampler.sampleRow(logits, row: i, vocab: vocab, u: Float.random(in: 0..<1))
+                : Int32.random(in: 0..<Int32(vocab))
         }
         return (accept.filter { $0 }.count, next)
     }
@@ -275,47 +277,6 @@ enum DiffusionGemmaRunner {
 
     private static func _ms(_ start: Date) -> String {
         String(format: "%.0fms", Date().timeIntervalSince(start) * 1000)
-    }
-
-    private static func argmaxRow(_ logits: [Float], row: Int, vocab: Int) -> Int32 {
-        let base = row * vocab
-        var best = 0
-        var bestVal = logits[base]
-        for j in 1..<vocab where logits[base + j] > bestVal {
-            bestVal = logits[base + j]
-            best = j
-        }
-        return Int32(best)
-    }
-
-    private static func entropyRow(_ logits: [Float], row: Int, vocab: Int) -> Float {
-        let base = row * vocab
-        var maxV = logits[base]
-        for j in 1..<vocab where logits[base + j] > maxV { maxV = logits[base + j] }
-        var sum: Float = 0
-        for j in 0..<vocab { sum += expf(logits[base + j] - maxV) }
-        let logSum = logf(sum) + maxV
-        var ent: Float = 0
-        for j in 0..<vocab {
-            let p = expf(logits[base + j] - logSum)
-            if p > 0 { ent -= p * (logits[base + j] - logSum) }
-        }
-        return ent
-    }
-
-    private static func sampleRow(_ logits: [Float], row: Int, vocab: Int) -> Int32 {
-        let base = row * vocab
-        var maxV = logits[base]
-        for j in 1..<vocab where logits[base + j] > maxV { maxV = logits[base + j] }
-        var sum: Float = 0
-        for j in 0..<vocab { sum += expf(logits[base + j] - maxV) }
-        let r = Float.random(in: 0..<1) * sum
-        var acc: Float = 0
-        for j in 0..<vocab {
-            acc += expf(logits[base + j] - maxV)
-            if acc >= r { return Int32(j) }
-        }
-        return Int32(vocab - 1)
     }
 }
 

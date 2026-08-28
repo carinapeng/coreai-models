@@ -2,15 +2,16 @@
 
 DiffusionGemma-26B-A4B is a block-diffusion model whose transformer backbone is
 the Gemma 4 26B-A4B text architecture used in an encoder/decoder configuration
-with shared weights. transformers 4.57.x does not recognize the
-``diffusion_gemma`` model type, so the configuration is reconstructed from the
-checkpoint's ``config.json`` rather than loaded through ``AutoConfig``.
+with shared weights. The configuration is loaded through transformers'
+``AutoConfig`` (the ``diffusion_gemma`` model type is registered in
+transformers >= 5.11) and mapped into these dataclasses, which add the
+export-oriented helpers — unified KV-cache sizing, per-layer attention type, and
+per-rope-type parameters — that the Core AI model builder relies on.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -130,10 +131,10 @@ class DiffusionGemmaConfig:
 
     @classmethod
     def from_pretrained(cls, model_id: str, cache_dir: str | None = None) -> DiffusionGemmaConfig:
-        from huggingface_hub import snapshot_download
+        from transformers import AutoConfig
 
-        model_dir = snapshot_download(model_id, allow_patterns=["config.json"], cache_dir=cache_dir)
-        return cls.from_local(os.path.join(model_dir, "config.json"))
+        hf_config = AutoConfig.from_pretrained(model_id, cache_dir=cache_dir)
+        return cls.from_dict(hf_config.to_dict())
 
 
 @dataclass

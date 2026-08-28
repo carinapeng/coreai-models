@@ -343,10 +343,12 @@ def test_decoder_casts_bf16_logits_to_f16() -> None:
 
 
 def test_config_from_pretrained_mocked() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        Path(tmp, "config.json").write_text(json.dumps({"text_config": {"hidden_size": 64}}))
-        with mock.patch("huggingface_hub.snapshot_download", return_value=tmp):
-            cfg = DiffusionGemmaConfig.from_pretrained("some/model")
+    class _FakeHFConfig:
+        def to_dict(self) -> dict:
+            return {"text_config": {"hidden_size": 64}}
+
+    with mock.patch("transformers.AutoConfig.from_pretrained", return_value=_FakeHFConfig()):
+        cfg = DiffusionGemmaConfig.from_pretrained("some/model")
     assert cfg.text_config.hidden_size == 64
 
 

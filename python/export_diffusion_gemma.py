@@ -293,8 +293,16 @@ def _quantize_encoder(encoder, compression, dtype):
     }
 
     logger.info("Applying %s weight quantization to encoder ...", compression)
+    # The caches (k_cache, v_cache) are the last two inputs; cache_seq_len is the
+    # traced KV-cache length. Only consumed if the preset calibrates activations
+    # (weight-only 4bit does not), but passed for a correct calibration contract.
     return quantize_pytorch_model(
-        encoder, (input_ids, position_ids, k_cache, v_cache), dynamic_shapes, quant_cfg
+        encoder,
+        (input_ids, position_ids, k_cache, v_cache),
+        dynamic_shapes,
+        quant_cfg,
+        cache_seq_len=TRACE_KV_CACHE_SEQ_LEN,
+        state_indices=(2, 3),
     )
 
 
@@ -323,7 +331,17 @@ def _quantize_decoder(decoder, compression, dec_inputs):
         dec_inputs["temperature"],
     )
     logger.info("Applying %s weight quantization to decoder ...", compression)
-    return quantize_pytorch_model(decoder, example_inputs, None, quant_cfg)
+    # The decoder is stateless per forward (encoder_k/encoder_v are read-only
+    # cross-attention inputs, not mutable caches), so there are no state indices
+    # and no KV-cache sequence length to bound calibration against.
+    return quantize_pytorch_model(
+        decoder,
+        example_inputs,
+        None,
+        quant_cfg,
+        cache_seq_len=0,
+        state_indices=(),
+    )
 
 
 def _save_tokenizer(hf_model_id: str, dest: Path) -> None:

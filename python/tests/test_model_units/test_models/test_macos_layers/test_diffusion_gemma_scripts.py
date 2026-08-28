@@ -483,10 +483,20 @@ def test_export_quantize_encoder_decoder_mocked() -> None:
     }
     with (
         mock.patch.object(presets, "get_preset", return_value={"torch_quantization_config": {}}),
-        mock.patch.object(compression, "quantize_pytorch_model", side_effect=lambda m, *a: m),
+        mock.patch.object(
+            compression, "quantize_pytorch_model", side_effect=lambda m, *a, **k: m
+        ) as quant,
     ):
         assert export_dg._quantize_encoder(enc, "4bit", torch.float32) is enc
         assert export_dg._quantize_decoder(dec, "4bit", dec_inputs) is dec
+
+    # Both calls must pass the calibration-contract kwargs the quantizer now requires.
+    enc_kwargs = quant.call_args_list[0].kwargs
+    assert set(enc_kwargs) >= {"cache_seq_len", "state_indices"}
+    assert enc_kwargs["state_indices"] == (2, 3)
+    dec_kwargs = quant.call_args_list[1].kwargs
+    assert dec_kwargs["state_indices"] == ()
+    assert dec_kwargs["cache_seq_len"] == 0
 
     # Preset without a torch_quantization_config -> quantization is skipped.
     with mock.patch.object(presets, "get_preset", return_value={}):

@@ -5,11 +5,10 @@
 
 """Unit tests for the DiffusionGemma encoder/decoder modules and config.
 
-transformers 4.57.x does not implement the ``diffusion_gemma`` architecture, so
-these tests exercise the module structure, forward-pass shapes, weight-key
-remapping, and config parsing on tiny random-initialized configs rather than
-comparing against a HuggingFace reference. A ``__main__`` runner is provided so
-the suite can also run under ``coverage`` directly (the sandbox blocks the
+These tests exercise the module structure, forward-pass shapes, weight-key
+remapping, and config parsing on tiny random-initialized configs — no model
+weights or HuggingFace reference are required. A ``__main__`` runner is provided
+so the suite can also run under ``coverage`` directly (the sandbox blocks the
 pytest rerun-failures socket plugin).
 """
 

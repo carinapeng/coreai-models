@@ -56,9 +56,10 @@ enum DiffusionGemmaRunner {
             messages: [["role": "user", "content": prompt]])
         let encLen = ids.count
 
+        let tLoad = Date()
         let encFn = try await loadMainFunction(at: dir.appendingPathComponent("encoder.aimodel"))
         let decFn = try await loadMainFunction(at: dir.appendingPathComponent("decoder.aimodel"))
-        log("Loaded encoder/decoder; prompt tokenizes to \(encLen) tokens")
+        log("Loaded encoder/decoder in \(_ms(tLoad)); prompt tokenizes to \(encLen) tokens")
 
         // ---- Cache/model geometry, read from the descriptors. ----------------
         // Encoder keyCache input is [layers, 1, kvHeads, seq, headDim].
@@ -92,6 +93,7 @@ enum DiffusionGemmaRunner {
         var valueIn = NDArray(descriptor: try inDesc(encDesc, "valueCache", label: "encoder"))
         fillFloatNDArray(&valueIn, with: cacheZeros)
 
+        let tPrefill = Date()
         var encOutputs = try await encFn.run(
             inputs: [
                 "input_ids": encInIds, "position_ids": encPos,
@@ -106,7 +108,7 @@ enum DiffusionGemmaRunner {
         }
         let encoderK = flattenAsFloat(keyOut)
         let encoderV = flattenAsFloat(valueOut)
-        log("Encoder prefill complete")
+        log("Encoder prefill (\(encLen) tokens) in \(_ms(tPrefill))")
 
         // ---- 2. Denoising loop over one canvas. ------------------------------
         var canvas = (0..<canvasLength).map { _ in Int32.random(in: 0..<Int32(vocab)) }
@@ -114,14 +116,18 @@ enum DiffusionGemmaRunner {
         var prevArgmax: [Int32]? = nil
         var bestArgmax = canvas
         var bestMeanH = Float.greatestFiniteMagnitude
+        let tDecode = Date()
+        var stepsRun = 0
 
         for step in stride(from: maxSteps, through: 1, by: -1) {
+            let tStep = Date()
             let temp = tMin + (tMax - tMin) * (Float(step) / Float(maxSteps))
             let (processed, softOut) = try await runDecoder(
                 decFn, decDesc, canvas: canvas, soft: soft, encLen: encLen,
                 canvasLength: canvasLength, hiddenSize: hiddenSize,
                 encoderK: encoderK, encoderV: encoderV, temperature: temp)
             soft = softOut
+            stepsRun += 1
 
             let argmaxCanvas = (0..<canvasLength).map { argmaxRow(processed, row: $0, vocab: vocab) }
             let entropies = (0..<canvasLength).map { entropyRow(processed, row: $0, vocab: vocab) }
@@ -136,7 +142,7 @@ enum DiffusionGemmaRunner {
             if verbose {
                 let preview = tokenizer.decode(tokens: argmaxCanvas.map(Int.init).filter { $0 != 0 })
                 log(
-                    "  step \(step) temp=\(fmt(temp)) meanH=\(fmt(meanH)) "
+                    "  step \(step) \(_ms(tStep)) temp=\(fmt(temp)) meanH=\(fmt(meanH)) "
                         + "accept=\(accepted)/\(canvasLength) | "
                         + preview.replacingOccurrences(of: "\n", with: " ").prefix(80))
             }
@@ -145,6 +151,14 @@ enum DiffusionGemmaRunner {
             prevArgmax = argmaxCanvas
             if stable && meanH < confidenceThreshold { break }
         }
+
+        let decodeSecs = Date().timeIntervalSince(tDecode)
+        let perStepMs = stepsRun > 0 ? decodeSecs * 1000 / Double(stepsRun) : 0
+        log(
+            "Decode: \(stepsRun) steps in \(fmt(Float(decodeSecs)))s "
+                + "(\(String(format: "%.0f", perStepMs)) ms/step, "
+                + "\(String(format: "%.1f", Double(canvasLength) / (decodeSecs / Double(stepsRun)))) "
+                + "canvas-tokens/s/step)")
 
         // Return the most-confident step's canvas, trimmed at the tokenizer's EOS.
         // Special tokens (channel/turn markers) are skipped by the decoder.
@@ -258,6 +272,10 @@ enum DiffusionGemmaRunner {
     }
 
     private static func fmt(_ x: Float) -> String { String(format: "%.3f", x) }
+
+    private static func _ms(_ start: Date) -> String {
+        String(format: "%.0fms", Date().timeIntervalSince(start) * 1000)
+    }
 
     private static func argmaxRow(_ logits: [Float], row: Int, vocab: Int) -> Int32 {
         let base = row * vocab

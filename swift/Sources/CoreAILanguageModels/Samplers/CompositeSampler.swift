@@ -115,7 +115,8 @@ public struct CompositeSampler {
 
     /// Greedy sampling on Float16 logits - returns index of maximum value.
     /// Converts to Float32 via vImage and uses vDSP_maxvi (faster than the
-    /// pure-Swift `logits.enumerated().max(by:)` for vocab-sized arrays).
+    /// pure-Swift `logits.enumerated().max(by:)` for vocab-sized arrays). A NaN ranks as
+    /// negative infinity and the lowest index wins a tie; see ``LogitRowScan``.
     #if !((os(macOS) || targetEnvironment(macCatalyst)) && arch(x86_64))
     private static func greedySampleFloat16(_ logits: inout [Float16]) -> Int32 {
         let span = InstrumentsProfiler.beginSample(strategy: "greedy", temperature: 0)
@@ -127,17 +128,15 @@ public struct CompositeSampler {
         }
 
         let logitsF32 = convertFloat16ToFloat32(&logits)
-
-        var maxVal: Float = 0
-        var maxIdx: vDSP_Length = 0
-        vDSP_maxvi(logitsF32, 1, &maxVal, &maxIdx, vDSP_Length(count))
+        let index = logitsF32.withUnsafeBufferPointer { LogitRowScan.argmax($0) }
 
         span.end()
-        return Int32(maxIdx)
+        return Int32(index)
     }
     #endif
 
-    /// Greedy sampling on Float32 logits - returns index of maximum value via vDSP_maxvi.
+    /// Greedy sampling on Float32 logits - returns index of maximum value via vDSP_maxvi, with
+    /// the NaN and tie rules of ``LogitRowScan``.
     private static func greedySampleFloat32(_ logits: inout [Float]) -> Int32 {
         let span = InstrumentsProfiler.beginSample(strategy: "greedy", temperature: 0)
 
@@ -147,12 +146,10 @@ public struct CompositeSampler {
             return 0
         }
 
-        var maxVal: Float = 0
-        var maxIdx: vDSP_Length = 0
-        vDSP_maxvi(logits, 1, &maxVal, &maxIdx, vDSP_Length(count))
+        let index = logits.withUnsafeBufferPointer { LogitRowScan.argmax($0) }
 
         span.end()
-        return Int32(maxIdx)
+        return Int32(index)
     }
 
     // MARK: - Composite Sampling (Float32 internal)

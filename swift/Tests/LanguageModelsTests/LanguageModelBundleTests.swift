@@ -148,4 +148,31 @@ struct LanguageModelBundleTests {
         #expect(bundle.modelBundle.userData?["git_sha"] == "abc1234")
         #expect(bundle.modelBundle.userData?["tags"] == "gold,recommended")
     }
+
+    @Test("A non-positive vocab_size or max_context_length is rejected, naming the field")
+    func nonPositiveSizesRejected() throws {
+        for (vocab, context, field) in [
+            (0, 512, "vocab_size"), (-1, 512, "vocab_size"), (100, 0, "max_context_length"),
+        ] {
+            let url = try Self.tempBundle(
+                """
+                {
+                  "metadata_version": "0.2",
+                  "kind": "llm",
+                  "name": "bad-sizes",
+                  "assets": { "main": "model.aimodel" },
+                  "language": {
+                    "tokenizer": "x/y",
+                    "vocab_size": \(vocab),
+                    "max_context_length": \(context)
+                  }
+                }
+                """)
+            #expect {
+                _ = try LanguageModelBundle(at: url)
+            } throws: { error in
+                "\(error)".contains("\(field) must be positive")
+            }
+        }
+    }
 }

@@ -46,6 +46,43 @@ struct CompositeSamplerTests {
         #expect(token == 0)
     }
 
+    @Test("Greedy ignores a NaN logit, in Float32 and Float16, including at index 0")
+    func greedyIgnoresNaN() {
+        var f32: [Float] = [.nan, 0, 5, 1]
+        #expect(CompositeSampler.sample(from: &f32, config: .greedy) == 2)
+        var f16: [Float16] = [.nan, 0, 5, 1]
+        #expect(CompositeSampler.sample(from: &f16, config: .greedy) == 2)
+        var middle: [Float] = [2, .nan, 1]
+        #expect(CompositeSampler.sample(from: &middle, config: .greedy) == 0)
+    }
+
+    @Test("Greedy on a row of NaNs and negative infinities selects the lowest index")
+    func greedyAllNaN() {
+        var nans: [Float] = [.nan, .nan]
+        #expect(CompositeSampler.sample(from: &nans, config: .greedy) == 0)
+        var mixed: [Float] = [-.infinity, .nan, -.infinity]
+        #expect(CompositeSampler.sample(from: &mixed, config: .greedy) == 0)
+    }
+
+    @Test("Greedy matches a first-maximum scan on random rows with ties and NaNs")
+    func greedyMatchesReferenceOnRandomRows() {
+        var rng = Xoshiro256StarStar(seed: 21)
+        for _ in 0..<500 {
+            let n = 1 + Int(rng.next() % 300)
+            var row = (0..<n).map { _ in Float(Int(rng.next() % 4)) }
+            for _ in 0..<Int(rng.next() % 4) { row[Int(rng.next() % UInt64(n))] = .nan }
+            if rng.next() % 5 == 0 { row[Int(rng.next() % UInt64(n))] = -.infinity }
+            // NaN ranks as negative infinity; the lowest index wins a tie.
+            let ranked = row.map { $0.isNaN ? -Float.infinity : $0 }
+            let best = ranked.max()!
+            let expected = Int32(ranked.firstIndex(of: best)!)
+            var f32 = row
+            #expect(CompositeSampler.sample(from: &f32, config: .greedy) == expected, "row \(row)")
+            var f16 = row.map { Float16($0) }
+            #expect(CompositeSampler.sample(from: &f16, config: .greedy) == expected, "row \(row)")
+        }
+    }
+
     // MARK: - Fast path (no topK/topP) — mask via -inf
 
     @Test("Fast path: Float32 -inf positions are never sampled")

@@ -160,6 +160,15 @@ public struct LanguageConfig: Codable, Sendable, Equatable {
         self.tokenizer = try c.decode(String.self, forKey: .tokenizer)
         self.vocabSize = try c.decode(Int.self, forKey: .vocabSize)
         self.maxContextLength = try c.decode(Int.self, forKey: .maxContextLength)
+        guard vocabSize > 0 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .vocabSize, in: c, debugDescription: "vocab_size must be positive, got \(vocabSize)")
+        }
+        guard maxContextLength > 0 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .maxContextLength, in: c,
+                debugDescription: "max_context_length must be positive, got \(maxContextLength)")
+        }
         self.embeddedTokenizer = try c.decodeIfPresent(Bool.self, forKey: .embeddedTokenizer) ?? true
         self.functionMap = try c.decodeIfPresent(FunctionMap.self, forKey: .functionMap)
         self.vision = try c.decodeIfPresent(VisionConfig.self, forKey: .vision)

@@ -114,8 +114,9 @@ public struct CompositeSampler {
     // MARK: - Greedy Sampling (Argmax)
 
     /// Greedy sampling on Float16 logits - returns index of maximum value.
-    /// Converts to Float32 via vImage and uses vDSP_maxvi (faster than the
-    /// pure-Swift `logits.enumerated().max(by:)` for vocab-sized arrays).
+    /// Converts to Float32 via vImage and scans with ``LogitRowScan`` (faster than the
+    /// pure-Swift `logits.enumerated().max(by:)` for vocab-sized arrays). A NaN ranks as
+    /// negative infinity and the lowest index wins a tie.
     #if !((os(macOS) || targetEnvironment(macCatalyst)) && arch(x86_64))
     private static func greedySampleFloat16(_ logits: inout [Float16]) -> Int32 {
         let span = InstrumentsProfiler.beginSample(strategy: "greedy", temperature: 0)
@@ -128,16 +129,15 @@ public struct CompositeSampler {
 
         let logitsF32 = convertFloat16ToFloat32(&logits)
 
-        var maxVal: Float = 0
-        var maxIdx: vDSP_Length = 0
-        vDSP_maxvi(logitsF32, 1, &maxVal, &maxIdx, vDSP_Length(count))
+        let index = logitsF32.withUnsafeBufferPointer { LogitRowScan.argmax($0) }
 
         span.end()
-        return Int32(maxIdx)
+        return Int32(index)
     }
     #endif
 
-    /// Greedy sampling on Float32 logits - returns index of maximum value via vDSP_maxvi.
+    /// Greedy sampling on Float32 logits - returns index of maximum value, with the NaN and tie
+    /// rules of ``LogitRowScan``.
     private static func greedySampleFloat32(_ logits: inout [Float]) -> Int32 {
         let span = InstrumentsProfiler.beginSample(strategy: "greedy", temperature: 0)
 
@@ -147,12 +147,10 @@ public struct CompositeSampler {
             return 0
         }
 
-        var maxVal: Float = 0
-        var maxIdx: vDSP_Length = 0
-        vDSP_maxvi(logits, 1, &maxVal, &maxIdx, vDSP_Length(count))
+        let index = logits.withUnsafeBufferPointer { LogitRowScan.argmax($0) }
 
         span.end()
-        return Int32(maxIdx)
+        return Int32(index)
     }
 
     // MARK: - Composite Sampling (Float32 internal)
@@ -216,7 +214,7 @@ public struct CompositeSampler {
     /// Vectorized softmax using vDSP. Operates in-place on the entire buffer.
     /// Numerically stable: subtracts max before exp. Handles `-.infinity` positions
     /// naturally (`exp(-inf) = 0`).
-    private static func softmaxVectorized(_ logits: inout [Float]) {
+    static func softmaxVectorized(_ logits: inout [Float]) {
         let n = vDSP_Length(logits.count)
 
         var maxLogit: Float = 0
@@ -237,7 +235,7 @@ public struct CompositeSampler {
 
     /// Multinomial sample from a normalized probability distribution via inverse CDF scan.
     /// Positions with probability `0` never advance the cumulative sum and are never selected.
-    private static func multinomialSample(
+    static func multinomialSample(
         _ probs: [Float],
         using rng: inout some RandomNumberGenerator
     ) -> Int {

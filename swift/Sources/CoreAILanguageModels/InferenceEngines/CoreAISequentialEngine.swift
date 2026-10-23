@@ -338,6 +338,65 @@ public final class CoreAISequentialEngine: InferenceEngine, IdempotentEngine, Ba
         return logitBuffer
     }
 
+    // MARK: - Speculative decoding support
+
+    /// Prefill `tokens` into the KV cache, discarding logits. Advances `processedTokenCount`;
+    /// roll back with `reset(to:)`.
+    public func advance(_ tokens: [Int32]) async throws {
+        guard !tokens.isEmpty else { return }
+        _ = try await processTokenBatch(tokens[...], sessionState: session)
+    }
+
+    /// Forward `tokens` in one pass; per-position `[vocabSize]` logits predicting the following
+    /// token. The primitive the speculative decoder verifies with.
+    public func forwardWithPerPositionLogits(_ tokens: [Int32]) async throws -> [[LogitsScalarType]] {
+        guard !tokens.isEmpty else {
+            throw InferenceRuntimeError.invalidState("Cannot process empty token batch")
+        }
+        let flat = try await processTokenBatch(tokens[...], sessionState: session)
+        let vocab = config.vocabSize
+        var perPosition: [[LogitsScalarType]] = []
+        perPosition.reserveCapacity(tokens.count)
+        for i in 0..<tokens.count {
+            perPosition.append(Array(flat[i * vocab..<(i + 1) * vocab]))
+        }
+        return perPosition
+    }
+
+    /// Forward `tokens` in one pass; per-position argmax (greedy) token. Fast path for greedy
+    /// verification (avoids a `[vocabSize]` copy per position).
+    public func forwardPerPositionArgmax(_ tokens: [Int32]) async throws -> [Int32] {
+        guard !tokens.isEmpty else {
+            throw InferenceRuntimeError.invalidState("Cannot process empty token batch")
+        }
+        let flat = try await processTokenBatch(tokens[...], sessionState: session)
+        let vocab = config.vocabSize
+        var argmaxes = [Int32](repeating: 0, count: tokens.count)
+        flat.withUnsafeBufferPointer { buffer in
+            for pos in 0..<tokens.count {
+                let base = pos * vocab
+                // First maximum; a NaN ranks as negative infinity (see ``LogitRowScan``).
+                var bestIndex = 0
+                var bestValue = -LogitsScalarType.infinity
+                for v in 0..<vocab where buffer[base + v] > bestValue {
+                    bestValue = buffer[base + v]
+                    bestIndex = v
+                }
+                argmaxes[pos] = Int32(bestIndex)
+            }
+        }
+        return argmaxes
+    }
+
+    /// Most tokens one verify pass can score from the current position. A sliding-window model's
+    /// write-first graph cannot take a multi-token step that would evict ring history, and a
+    /// rewind past a wrapped ring is unsafe, so a block must end inside the ring; past it only
+    /// single-token steps remain, which leaves nothing to draft.
+    public var maxVerifyBlockLength: Int {
+        guard let ring = slidingRingCapacity else { return Int.max }
+        return Swift.max(1, ring - session.processedTokenCount)
+    }
+
     // MARK: - Batched decode
 
     /// Output of `lockstepBatchedGenerate`. `tokens` is `[N][generated]`, and a row that hit EOS is
@@ -704,9 +763,10 @@ public final class CoreAISequentialEngine: InferenceEngine, IdempotentEngine, Ba
     }
 
     public func reset(to tokenIndex: Int) async throws {
-        precondition(
-            tokenIndex >= 0 && tokenIndex <= session.processedTokenCount,
-            "reset(to: \(tokenIndex)) out of range [0, \(session.processedTokenCount)]")
+        guard tokenIndex >= 0, tokenIndex <= session.processedTokenCount else {
+            throw InferenceRuntimeError.invalidArgument(
+                "reset(to: \(tokenIndex)) out of range [0, \(session.processedTokenCount)]")
+        }
         if tokenIndex != 0 && session.hasNonTruncatableStates {
             throw InferenceRuntimeError.invalidState(
                 "Partial reset is not supported for hybrid models with recurrent state. "

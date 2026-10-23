@@ -9,16 +9,16 @@ import Foundation
 /// A block of candidate tokens a drafter proposes for the target to verify in a
 /// single pass: a linear chain in which candidate `i` follows candidate `i-1`, and
 /// candidate `0` follows the anchor (the last confirmed token).
-public struct DraftProposal: Sendable {
+package struct DraftProposal: Sendable {
     /// Candidate tokens, in the order the verifier scores them.
-    public var tokens: [Int32]
+    package var tokens: [Int32]
 
     /// Per-candidate logits (the distribution each token was drawn from), required
     /// for speculative sampling. `nil` for greedy-only drafters.
-    public var logits: [[LogitsScalarType]]?
+    package var logits: [[LogitsScalarType]]?
 
     /// - Precondition: `logits`, when present, holds one row per token.
-    public init(tokens: [Int32], logits: [[LogitsScalarType]]? = nil) {
+    package init(tokens: [Int32], logits: [[LogitsScalarType]]? = nil) {
         precondition(
             logits == nil || logits?.count == tokens.count,
             "logits holds \(logits?.count ?? 0) rows for \(tokens.count) tokens")
@@ -32,14 +32,14 @@ public struct DraftProposal: Sendable {
 ///
 /// Row-major `values[p * hiddenDim + d]`; row `p` is the feature vector for the
 /// token at absolute position `startPosition + p`.
-public struct DrafterFeatures: Sendable {
-    public var values: [Float]
-    public var positionCount: Int
-    public var hiddenDim: Int
-    public var startPosition: Int
+package struct DrafterFeatures: Sendable {
+    package var values: [Float]
+    package var positionCount: Int
+    package var hiddenDim: Int
+    package var startPosition: Int
 
     /// - Precondition: `values` holds at least `positionCount * hiddenDim` elements.
-    public init(values: [Float], positionCount: Int, hiddenDim: Int, startPosition: Int) {
+    package init(values: [Float], positionCount: Int, hiddenDim: Int, startPosition: Int) {
         precondition(
             positionCount >= 0 && hiddenDim >= 0 && values.count >= positionCount * hiddenDim,
             "\(values.count) values for \(positionCount) positions of width \(hiddenDim)")
@@ -52,7 +52,7 @@ public struct DrafterFeatures: Sendable {
     /// The feature row that seeds a drafter's recurrence once `confirmedLength` tokens are
     /// committed: the row of the last committed token, clamped to the rows present. `nil` when
     /// there are no rows.
-    public func seedRow(confirmedLength: Int) -> [Float]? {
+    package func seedRow(confirmedLength: Int) -> [Float]? {
         guard hiddenDim > 0, positionCount > 0 else { return nil }
         let row = Swift.max(0, Swift.min(confirmedLength - startPosition - 1, positionCount - 1))
         return Array(values[row * hiddenDim..<(row + 1) * hiddenDim])
@@ -60,7 +60,7 @@ public struct DrafterFeatures: Sendable {
 
     /// The first `count` rows, re-based to `startPosition` — the committed-prefix
     /// features an attached-head drafter injects after acceptance.
-    public func prefixRows(_ count: Int) -> DrafterFeatures {
+    package func prefixRows(_ count: Int) -> DrafterFeatures {
         let n = Swift.max(0, Swift.min(count, positionCount))
         return DrafterFeatures(
             values: Array(values.prefix(n * hiddenDim)),
@@ -77,7 +77,7 @@ public struct DrafterFeatures: Sendable {
 ///   argmax; the output is token-for-token identical to greedy target decoding.
 /// - `sampling`: the accept/reject scheme of Chen et al. (2023) at the given
 ///   temperature; the output is distributionally identical to sampling the target.
-public enum VerificationPolicy: Sendable {
+package enum VerificationPolicy: Sendable {
     case greedy
     case sampling(temperature: Double)
 

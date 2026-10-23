@@ -16,7 +16,7 @@ import Foundation
 ///
 /// The decoder owns verification and acceptance; a drafter only proposes and
 /// keeps its own state in step with the confirmed prefix.
-public protocol DrafterEngine: Sendable {
+package protocol DrafterEngine: Sendable {
     /// Maximum context the drafter can hold; the decoder caps generation by the
     /// smaller of this and the target's.
     var maxContextLength: Int { get }
@@ -44,26 +44,26 @@ public protocol DrafterEngine: Sendable {
 /// prefills the newly-confirmed tail.
 ///
 /// Single-owner: one task drives it at a time, and its draft engine's cache is one sequence.
-public final class AutoregressiveDrafter: DrafterEngine, @unchecked Sendable {
+package final class AutoregressiveDrafter: DrafterEngine, @unchecked Sendable {
     private let engine: any SpeculativeEngine
 
-    public var maxContextLength: Int { engine.maxContextLength }
+    package var maxContextLength: Int { engine.maxContextLength }
 
-    public init(engine: any SpeculativeEngine) {
+    package init(engine: any SpeculativeEngine) {
         self.engine = engine
     }
 
-    public func reset(to tokenIndex: Int) async throws {
+    package func reset(to tokenIndex: Int) async throws {
         try await engine.reset(to: tokenIndex)
     }
 
-    public func commit(confirmedLength: Int, features: DrafterFeatures?) async throws {
+    package func commit(confirmedLength: Int, features: DrafterFeatures?) async throws {
         // Keep the accepted drafts the engine already holds; the correction (the
         // new anchor) is re-prefilled from `confirmedPrefix` on the next draft.
         try await engine.reset(to: min(confirmedLength, engine.processedTokenCount))
     }
 
-    public func draftAll(confirmedPrefix: [Int32], count: Int, policy: VerificationPolicy) async throws
+    package func draftAll(confirmedPrefix: [Int32], count: Int, policy: VerificationPolicy) async throws
         -> DraftProposal
     {
         // Prefill any confirmed tail the drafter hasn't seen, leaving the last

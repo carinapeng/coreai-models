@@ -20,7 +20,7 @@ import Foundation
 /// `forward…` primitives extend it by the number of tokens passed and return one
 /// prediction per input position (the prediction for the token that *follows*
 /// that position). `advance(_:)` extends it without materializing logits.
-public protocol SpeculativeEngine: Sendable {
+package protocol SpeculativeEngine: Sendable {
     /// Maximum number of tokens (prompt + generated) the engine can hold.
     var maxContextLength: Int { get }
 
@@ -86,30 +86,30 @@ public protocol SpeculativeEngine: Sendable {
 }
 
 extension SpeculativeEngine {
-    public var verifyTileWidth: Int? { nil }
-    public var maxVerifyBlockLength: Int { Int.max }
+    package var verifyTileWidth: Int? { nil }
+    package var maxVerifyBlockLength: Int { Int.max }
 
-    public func forwardProposal(
+    package func forwardProposal(
         anchor: Int32, proposal: DraftProposal
     ) async throws -> (logits: [[LogitsScalarType]], features: DrafterFeatures?) {
         let logits = try await forwardWithPerPositionLogits([anchor] + proposal.tokens)
         return (logits, nil)
     }
 
-    public func forwardProposalGreedy(
+    package func forwardProposalGreedy(
         anchor: Int32, proposal: DraftProposal
     ) async throws -> (argmax: [Int32], features: DrafterFeatures?) {
         let argmax = try await forwardPerPositionArgmax([anchor] + proposal.tokens)
         return (argmax, nil)
     }
 
-    public var oneForwardDraftBudget: Int { Int.max }
+    package var oneForwardDraftBudget: Int { Int.max }
 }
 
 // The Core AI sequential engine already provides every primitive above; it only
 // needs `maxContextLength` surfaced from its configuration to conform.
 extension CoreAISequentialEngine: SpeculativeEngine {
-    public var maxContextLength: Int { config.maxContextLength }
+    package var maxContextLength: Int { config.maxContextLength }
 }
 
 // The static-shape engine is the ANE path: it implements the speculative primitives

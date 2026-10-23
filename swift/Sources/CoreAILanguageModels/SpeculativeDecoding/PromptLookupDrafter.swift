@@ -19,22 +19,22 @@ import Foundation
 /// Greedy-only (no draft distribution), which is the common prompt-lookup setting.
 ///
 /// Single-owner: one task drives it at a time.
-public final class PromptLookupDrafter: DrafterEngine, @unchecked Sendable {
+package final class PromptLookupDrafter: DrafterEngine, @unchecked Sendable {
     private let lookup: PromptLookup
-    public let maxContextLength: Int
+    package let maxContextLength: Int
 
     /// - Parameters:
     ///   - maxNgram: longest suffix to match (prefer longer, more-specific matches).
     ///   - minNgram: shortest suffix to accept a match on.
-    public init(maxNgram: Int = 3, minNgram: Int = 1, maxContextLength: Int = 131072) {
+    package init(maxNgram: Int = 3, minNgram: Int = 1, maxContextLength: Int = 131072) {
         self.lookup = PromptLookup(maxNgram: maxNgram, minNgram: minNgram)
         self.maxContextLength = maxContextLength
     }
 
-    public func reset(to tokenIndex: Int) async throws {}
-    public func commit(confirmedLength: Int, features: DrafterFeatures?) async throws {}
+    package func reset(to tokenIndex: Int) async throws {}
+    package func commit(confirmedLength: Int, features: DrafterFeatures?) async throws {}
 
-    public func draftAll(confirmedPrefix: [Int32], count: Int, policy: VerificationPolicy) async throws
+    package func draftAll(confirmedPrefix: [Int32], count: Int, policy: VerificationPolicy) async throws
         -> DraftProposal
     {
         // No match: no speculation this step (target advances one token as usual).

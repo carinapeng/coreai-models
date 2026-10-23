@@ -689,7 +689,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
     public var maxContextLength: Int { config.maxContextLength }
 
     /// Prefill `tokens` at the current position, discarding logits.
-    public func advance(_ tokens: [Int32]) async throws {
+    package func advance(_ tokens: [Int32]) async throws {
         _ = try await processSpeculativeBlock(tokens, capture: .none)
     }
 
@@ -697,7 +697,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
     /// following token. This is the verify primitive the speculative decoder needs: the
     /// static-shape graph already computes every position's logits (see `inference`), so
     /// verification of a draft block runs on the same ANE engine.
-    public func forwardWithPerPositionLogits(_ tokens: [Int32]) async throws -> [[LogitsScalarType]] {
+    package func forwardWithPerPositionLogits(_ tokens: [Int32]) async throws -> [[LogitsScalarType]] {
         try await processSpeculativeBlock(tokens, capture: .fullLogits).logits
     }
 
@@ -709,7 +709,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
     /// the token plain decoding picks, softcap included: the cap rounds near-equal logits to the
     /// same value, and a tie goes to the lowest index. Only entries that can reach the maximum
     /// after capping are capped.
-    public func forwardPerPositionArgmax(_ tokens: [Int32]) async throws -> [Int32] {
+    package func forwardPerPositionArgmax(_ tokens: [Int32]) async throws -> [Int32] {
         try await processSpeculativeBlock(tokens, capture: .argmax).argmax
     }
 
@@ -846,7 +846,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
     /// widest graph bounds it: a longer block would run through prefill graphs that capture no
     /// logits. The sliding-window ring bounds it further: rejecting every draft must rewind to
     /// the anchor, which the ring allows only for blocks up to `SlidingRing.maxVerifyBlockLength`.
-    public var maxVerifyBlockLength: Int {
+    package var maxVerifyBlockLength: Int {
         min(
             maxQueryLength,
             states.slidingRing?.maxVerifyBlockLength(alignment: verifyTileWidth ?? 1) ?? Int.max)
@@ -854,7 +854,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
 
     /// Verify batches start on a multiple of the decode width (see `processSpeculativeBlock`): the
     /// widest `extend_*` rung, not `maxQueryLength`, which includes the prefill rungs.
-    public var verifyTileWidth: Int? {
+    package var verifyTileWidth: Int? {
         extendFunctionNames.filter { $0.hasPrefix("extend") }
             .compactMap { Self.parseFunctionDimensions($0)?.queryLength }.max()
     }
@@ -862,7 +862,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
     /// Query length of the decode graph that runs a block starting at the current position,
     /// which is the batch window a verify block must fit to take one forward. This is not the
     /// largest query length across all graphs, which includes the prefill graphs.
-    public var decodeBlockSize: Int? {
+    package var decodeBlockSize: Int? {
         try? queryLength(
             of: forwardGraph(numInputTokens: 1, currentPosition: processedTokenCount, isPrefill: false))
     }
@@ -870,7 +870,7 @@ public final class StaticShapeEngine: InferenceEngine, @unchecked Sendable {
     /// Proposal tokens that fit with the anchor in one forward of the decode graph: the
     /// anchor sits at the current position, and a block that crosses the next batch-size
     /// boundary needs a second forward.
-    public var oneForwardDraftBudget: Int {
+    package var oneForwardDraftBudget: Int {
         Self.batchAlignedDraftBudget(
             batchSize: decodeBlockSize ?? maxQueryLength, anchorPosition: processedTokenCount)
     }

@@ -342,14 +342,14 @@ public final class CoreAISequentialEngine: InferenceEngine, IdempotentEngine, Ba
 
     /// Prefill `tokens` into the KV cache, discarding logits. Advances `processedTokenCount`;
     /// roll back with `reset(to:)`.
-    public func advance(_ tokens: [Int32]) async throws {
+    package func advance(_ tokens: [Int32]) async throws {
         guard !tokens.isEmpty else { return }
         _ = try await processTokenBatch(tokens[...], sessionState: session)
     }
 
     /// Forward `tokens` in one pass; per-position `[vocabSize]` logits predicting the following
     /// token. The primitive the speculative decoder verifies with.
-    public func forwardWithPerPositionLogits(_ tokens: [Int32]) async throws -> [[LogitsScalarType]] {
+    package func forwardWithPerPositionLogits(_ tokens: [Int32]) async throws -> [[LogitsScalarType]] {
         guard !tokens.isEmpty else {
             throw InferenceRuntimeError.invalidState("Cannot process empty token batch")
         }
@@ -365,7 +365,7 @@ public final class CoreAISequentialEngine: InferenceEngine, IdempotentEngine, Ba
 
     /// Forward `tokens` in one pass; per-position argmax (greedy) token. Fast path for greedy
     /// verification (avoids a `[vocabSize]` copy per position).
-    public func forwardPerPositionArgmax(_ tokens: [Int32]) async throws -> [Int32] {
+    package func forwardPerPositionArgmax(_ tokens: [Int32]) async throws -> [Int32] {
         guard !tokens.isEmpty else {
             throw InferenceRuntimeError.invalidState("Cannot process empty token batch")
         }
@@ -392,7 +392,7 @@ public final class CoreAISequentialEngine: InferenceEngine, IdempotentEngine, Ba
     /// write-first graph cannot take a multi-token step that would evict ring history, and a
     /// rewind past a wrapped ring is unsafe, so a block must end inside the ring; past it only
     /// single-token steps remain, which leaves nothing to draft.
-    public var maxVerifyBlockLength: Int {
+    package var maxVerifyBlockLength: Int {
         guard let ring = slidingRingCapacity else { return Int.max }
         return Swift.max(1, ring - session.processedTokenCount)
     }

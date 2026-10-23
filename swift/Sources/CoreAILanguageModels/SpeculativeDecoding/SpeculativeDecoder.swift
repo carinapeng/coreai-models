@@ -31,12 +31,12 @@ import Tokenizers
 ///
 /// Single-owner: set its properties before generating, and run one generation at a time; it holds
 /// no lock, and the engines it drives each hold one sequence.
-public final class SpeculativeDecoder: @unchecked Sendable {
+package final class SpeculativeDecoder: @unchecked Sendable {
     private let drafter: any DrafterEngine
     private let target: any SpeculativeEngine
     /// Drafts per round (`k`); with ``init(drafter:target:numDraftTokens:alignDraftsToVerifyTile:adaptiveDraftCount:)``'s
     /// adaptive count, the starting value.
-    public let numDraftTokens: Int
+    package let numDraftTokens: Int
     private let alignDraftsToVerifyTile: Bool
     private let adaptiveDraftCount: Bool
 
@@ -44,39 +44,39 @@ public final class SpeculativeDecoder: @unchecked Sendable {
     /// window (``SpeculativeEngine/oneForwardDraftBudget``), so a verify never pays a
     /// second forward to cross a batch boundary. When the window has no room left for a
     /// proposal, the full proposal is used and spans two forwards. Output is unchanged.
-    public var alignProposalsToForward: Bool = true
+    package var alignProposalsToForward: Bool = true
 
     /// Prompt lookup: when set, a block whose recent tokens reappear earlier in the context
     /// proposes what followed that occurrence instead of drafting. Output is unchanged.
-    public var promptLookup: PromptLookup?
+    package var promptLookup: PromptLookup?
 
     /// Acceptance / throughput statistics for a speculative run.
-    public struct Stats: Sendable {
+    package struct Stats: Sendable {
         /// Tokens actually emitted (accepted drafts + corrections).
-        public var generatedTokens: Int = 0
+        package var generatedTokens: Int = 0
         /// Draft tokens proposed across all iterations.
-        public var draftTokensProposed: Int = 0
+        package var draftTokensProposed: Int = 0
         /// Draft tokens the target accepted.
-        public var draftTokensAccepted: Int = 0
+        package var draftTokensAccepted: Int = 0
         /// Number of propose/verify iterations (= target forward passes).
-        public var iterations: Int = 0
+        package var iterations: Int = 0
         /// Wall-clock seconds spent in the generation loop only (excludes the
         /// one-time prompt prefill / graph specialization), so it is comparable to
         /// the base runner's "Generation:" metric.
-        public var generationSeconds: Double = 0
+        package var generationSeconds: Double = 0
         /// Iterations whose proposal came from prompt lookup, and its proposed/accepted tokens.
-        public var lookupProposals: Int = 0
-        public var lookupTokensProposed: Int = 0
-        public var lookupTokensAccepted: Int = 0
+        package var lookupProposals: Int = 0
+        package var lookupTokensProposed: Int = 0
+        package var lookupTokensAccepted: Int = 0
 
         /// Fraction of proposed draft tokens the target accepted.
-        public var acceptanceRate: Double {
+        package var acceptanceRate: Double {
             draftTokensProposed == 0 ? 0 : Double(draftTokensAccepted) / Double(draftTokensProposed)
         }
 
         /// Mean tokens committed per target forward pass. Values > 1 mean the
         /// target ran fewer forward passes than tokens produced — the speedup.
-        public var meanTokensPerTargetPass: Double {
+        package var meanTokensPerTargetPass: Double {
             iterations == 0 ? 0 : Double(generatedTokens) / Double(iterations)
         }
     }
@@ -89,7 +89,7 @@ public final class SpeculativeDecoder: @unchecked Sendable {
     ///     run on a different backend than the draft.
     ///   - numDraftTokens: tokens the draft proposes per step (`k`). Default 4.
     ///   - adaptiveDraftCount: see ``init(drafter:target:numDraftTokens:alignDraftsToVerifyTile:adaptiveDraftCount:)``.
-    public init(
+    package init(
         draft: any SpeculativeEngine, target: any SpeculativeEngine, numDraftTokens: Int = 4,
         adaptiveDraftCount: Bool = false
     ) {
@@ -112,7 +112,7 @@ public final class SpeculativeDecoder: @unchecked Sendable {
     ///   - adaptiveDraftCount: start at `numDraftTokens`, then raise the draft count by 2 after a
     ///     round whose drafts were all accepted and lower it by 1 after any rejection, within 1 and
     ///     the larger of `numDraftTokens` and the verify tile's last slot.
-    public init(
+    package init(
         drafter: any DrafterEngine, target: any SpeculativeEngine, numDraftTokens: Int = 4,
         alignDraftsToVerifyTile: Bool = false, adaptiveDraftCount: Bool = false
     ) {
@@ -125,7 +125,7 @@ public final class SpeculativeDecoder: @unchecked Sendable {
 
     /// Run greedy speculative decoding (lossless; token-for-token identical to the
     /// target alone). See the type overview.
-    public func generateGreedy(
+    package func generateGreedy(
         promptTokens: [Int32],
         maxNewTokens: Int,
         stopTokenIds: Set<Int32>,
@@ -142,7 +142,7 @@ public final class SpeculativeDecoder: @unchecked Sendable {
     ///
     /// - Note: temperature-only (no top-k/top-p); those would have to be applied
     ///   consistently to both `p` and `q` to preserve the guarantee.
-    public func generateSampling(
+    package func generateSampling(
         promptTokens: [Int32],
         maxNewTokens: Int,
         stopTokenIds: Set<Int32>,

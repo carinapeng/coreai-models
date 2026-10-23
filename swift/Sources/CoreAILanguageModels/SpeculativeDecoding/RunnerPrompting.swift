@@ -8,10 +8,10 @@ import Tokenizers
 
 /// Stop-token construction shared by the command-line runner's generation paths, kept apart from
 /// argument handling so the paths build identical inputs and the logic can be tested.
-public enum RunnerPrompting {
+package enum RunnerPrompting {
     /// Stop tokens beyond the end-of-sequence token: those named in the tokenizer configuration
     /// plus, for agentic vocabularies, the end-of-turn token.
-    public static func additionalStopTokenIds(
+    package static func additionalStopTokenIds(
         tokenizerDirectory: URL?,
         tokenizer: any Tokenizer
     ) -> Set<Int32> {
@@ -30,7 +30,7 @@ public enum RunnerPrompting {
     }
 
     /// The end-of-sequence token together with `additional`.
-    public static func stopTokenIds(
+    package static func stopTokenIds(
         tokenizer: any Tokenizer,
         additional: Set<Int32>
     ) -> Set<Int32> {

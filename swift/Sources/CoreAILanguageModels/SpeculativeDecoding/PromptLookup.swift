@@ -6,14 +6,14 @@
 /// Prompt-lookup proposals: finds the most recent earlier occurrence of the context's last
 /// n tokens and proposes the tokens that followed it. Needs no model work, and is accurate
 /// when the output copies spans from the context (rewrites, extraction, document QA).
-public struct PromptLookup: Sendable {
+package struct PromptLookup: Sendable {
     /// Longest and shortest suffix lengths matched; longer matches are tried first.
-    public var maxNgram: Int
-    public var minNgram: Int
+    package var maxNgram: Int
+    package var minNgram: Int
     /// Most tokens proposed per block.
-    public var maxProposal: Int
+    package var maxProposal: Int
 
-    public init(maxNgram: Int = 4, minNgram: Int = 3, maxProposal: Int = 7) {
+    package init(maxNgram: Int = 4, minNgram: Int = 3, maxProposal: Int = 7) {
         self.minNgram = max(1, minNgram)
         self.maxNgram = max(self.minNgram, maxNgram)
         self.maxProposal = max(1, maxProposal)
@@ -21,7 +21,7 @@ public struct PromptLookup: Sendable {
 
     /// Up to `count` tokens that followed the latest earlier occurrence of the context's
     /// suffix, or an empty array when no suffix of at least `minNgram` tokens recurs.
-    public func propose(context: [Int32], count: Int) -> [Int32] {
+    package func propose(context: [Int32], count: Int) -> [Int32] {
         guard count > 0 else { return [] }
         let end = context.count
         for n in stride(from: min(maxNgram, end - 1), through: minNgram, by: -1) {

@@ -1,0 +1,28 @@
+{
+ "hf_id": "Qwen/Qwen3.5-0.8B",
+ "adapter": true,
+ "adapter_weight_names": [
+  "l15_u",
+  "l15_c",
+  "l19_u",
+  "l19_c"
+ ],
+ "state_names": [
+  "l15_u",
+  "l15_c",
+  "l19_u",
+  "l19_c",
+  "keyCache",
+  "valueCache",
+  "convStates",
+  "recurrentStates"
+ ],
+ "compression": "none",
+ "compute_precision": "float16",
+ "max_context_length": 9216,
+ "seconds_load_and_compress": 2.5,
+ "seconds_convert": 62.9,
+ "seconds_save": 1.4,
+ "seconds_total": 66.8,
+ "aimodel_bytes": 1505380767
+}

@@ -1,0 +1,305 @@
+{
+ "prompts": [
+  "Solve: what is 17 * 23? Think step by step.",
+  "Find all real x such that x^2 - 5x + 6 = 0.",
+  "Write a short poem about the ocean.",
+  "The capital of France is",
+  "def fibonacci(n):\n    \"\"\"Return the n-th Fibonacci number.\"\"",
+  "<|im_start|>user\nConvert the point $(0,3)$ in rectangular co"
+ ],
+ "n_tokens": [
+  18,
+  20,
+  8,
+  5,
+  15,
+  57
+ ],
+ "rows": [
+  {
+   "prompt": "Solve: what is 17 * 23? Thin",
+   "T": 18,
+   "ca_off_vs_pt_base": [
+    8.610220909118652,
+    0.7777777777777778
+   ],
+   "ca_on_vs_pt_edited": [
+    8.201848983764648,
+    0.7222222222222222
+   ],
+   "ca_on_vs_pt_base": [
+    8.119986534118652,
+    0.7222222222222222
+   ],
+   "ca_off_vs_ca_plain": [
+    0.0,
+    1.0
+   ],
+   "pt_edited_vs_pt_base": [
+    2.213731288909912,
+    1.0
+   ],
+   "ca_on_minus_off_vs_pt_edit_minus_base_maxabs": 1.6614103317260742,
+   "ca_off_vs_pt4bit_off": [
+    0.5,
+    0.9444444444444444
+   ],
+   "ca_on_vs_pt4bit_on": [
+    0.46484375,
+    1.0
+   ],
+   "ca_on_vs_pt4bit_off": [
+    2.6171875,
+    1.0
+   ],
+   "pt4bit_on_vs_pt4bit_off": [
+    2.578125,
+    1.0
+   ],
+   "delta_corr_ca_vs_pt4bit": 0.9876412153244019,
+   "delta_corr_ca_vs_pt_fp32": 0.8879522085189819,
+   "delta_corr_pt4bit_vs_pt_fp32": 0.8971204161643982
+  },
+  {
+   "prompt": "Find all real x such that x^",
+   "T": 20,
+   "ca_off_vs_pt_base": [
+    10.980964660644531,
+    0.8
+   ],
+   "ca_on_vs_pt_edited": [
+    10.043960571289062,
+    0.7
+   ],
+   "ca_on_vs_pt_base": [
+    10.617683410644531,
+    0.7
+   ],
+   "ca_off_vs_ca_plain": [
+    0.0,
+    1.0
+   ],
+   "pt_edited_vs_pt_base": [
+    2.138334274291992,
+    1.0
+   ],
+   "ca_on_minus_off_vs_pt_edit_minus_base_maxabs": 1.674485683441162,
+   "ca_off_vs_pt4bit_off": [
+    0.939453125,
+    0.95
+   ],
+   "ca_on_vs_pt4bit_on": [
+    0.6328125,
+    0.95
+   ],
+   "ca_on_vs_pt4bit_off": [
+    2.43359375,
+    0.95
+   ],
+   "pt4bit_on_vs_pt4bit_off": [
+    2.5,
+    0.9
+   ],
+   "delta_corr_ca_vs_pt4bit": 0.9791325926780701,
+   "delta_corr_ca_vs_pt_fp32": 0.8697503209114075,
+   "delta_corr_pt4bit_vs_pt_fp32": 0.8864089250564575
+  },
+  {
+   "prompt": "Write a short poem about the",
+   "T": 8,
+   "ca_off_vs_pt_base": [
+    8.597942352294922,
+    0.875
+   ],
+   "ca_on_vs_pt_edited": [
+    8.137876510620117,
+    0.875
+   ],
+   "ca_on_vs_pt_base": [
+    8.607795715332031,
+    0.875
+   ],
+   "ca_off_vs_ca_plain": [
+    0.0,
+    1.0
+   ],
+   "pt_edited_vs_pt_base": [
+    4.299220085144043,
+    1.0
+   ],
+   "ca_on_minus_off_vs_pt_edit_minus_base_maxabs": 1.653243064880371,
+   "ca_off_vs_pt4bit_off": [
+    0.5849609375,
+    1.0
+   ],
+   "ca_on_vs_pt4bit_on": [
+    0.64453125,
+    1.0
+   ],
+   "ca_on_vs_pt4bit_off": [
+    4.0478515625,
+    1.0
+   ],
+   "pt4bit_on_vs_pt4bit_off": [
+    4.03515625,
+    1.0
+   ],
+   "delta_corr_ca_vs_pt4bit": 0.9959105253219604,
+   "delta_corr_ca_vs_pt_fp32": 0.9413384199142456,
+   "delta_corr_pt4bit_vs_pt_fp32": 0.9468545317649841
+  },
+  {
+   "prompt": "The capital of France is",
+   "T": 5,
+   "ca_off_vs_pt_base": [
+    8.714971542358398,
+    0.6
+   ],
+   "ca_on_vs_pt_edited": [
+    8.274330139160156,
+    0.6
+   ],
+   "ca_on_vs_pt_base": [
+    8.589971542358398,
+    0.6
+   ],
+   "ca_off_vs_ca_plain": [
+    0.0,
+    1.0
+   ],
+   "pt_edited_vs_pt_base": [
+    2.355637550354004,
+    1.0
+   ],
+   "ca_on_minus_off_vs_pt_edit_minus_base_maxabs": 1.057138204574585,
+   "ca_off_vs_pt4bit_off": [
+    0.548828125,
+    0.8
+   ],
+   "ca_on_vs_pt4bit_on": [
+    0.599609375,
+    1.0
+   ],
+   "ca_on_vs_pt4bit_off": [
+    2.6337890625,
+    0.8
+   ],
+   "pt4bit_on_vs_pt4bit_off": [
+    2.6357421875,
+    0.8
+   ],
+   "delta_corr_ca_vs_pt4bit": 0.9900596141815186,
+   "delta_corr_ca_vs_pt_fp32": 0.9343777298927307,
+   "delta_corr_pt4bit_vs_pt_fp32": 0.944763720035553
+  },
+  {
+   "prompt": "def fibonacci(n):     \"\"\"Ret",
+   "T": 15,
+   "ca_off_vs_pt_base": [
+    11.185333251953125,
+    0.8666666666666667
+   ],
+   "ca_on_vs_pt_edited": [
+    10.343570709228516,
+    0.8
+   ],
+   "ca_on_vs_pt_base": [
+    10.286895751953125,
+    0.8
+   ],
+   "ca_off_vs_ca_plain": [
+    0.0,
+    1.0
+   ],
+   "pt_edited_vs_pt_base": [
+    1.875709056854248,
+    1.0
+   ],
+   "ca_on_minus_off_vs_pt_edit_minus_base_maxabs": 1.442180871963501,
+   "ca_off_vs_pt4bit_off": [
+    0.427734375,
+    1.0
+   ],
+   "ca_on_vs_pt4bit_on": [
+    0.43359375,
+    1.0
+   ],
+   "ca_on_vs_pt4bit_off": [
+    1.953125,
+    0.9333333333333333
+   ],
+   "pt4bit_on_vs_pt4bit_off": [
+    1.9609375,
+    0.9333333333333333
+   ],
+   "delta_corr_ca_vs_pt4bit": 0.9797752499580383,
+   "delta_corr_ca_vs_pt_fp32": 0.8446133136749268,
+   "delta_corr_pt4bit_vs_pt_fp32": 0.8642336130142212
+  },
+  {
+   "prompt": "<|im_start|>user Convert the",
+   "T": 57,
+   "ca_off_vs_pt_base": [
+    13.019842147827148,
+    0.8070175438596491
+   ],
+   "ca_on_vs_pt_edited": [
+    14.705739974975586,
+    0.8421052631578947
+   ],
+   "ca_on_vs_pt_base": [
+    14.781316757202148,
+    0.8421052631578947
+   ],
+   "ca_off_vs_ca_plain": [
+    0.0,
+    1.0
+   ],
+   "pt_edited_vs_pt_base": [
+    2.647891044616699,
+    1.0
+   ],
+   "ca_on_minus_off_vs_pt_edit_minus_base_maxabs": 2.4896650314331055,
+   "ca_off_vs_pt4bit_off": [
+    0.7646484375,
+    0.9649122807017544
+   ],
+   "ca_on_vs_pt4bit_on": [
+    0.720703125,
+    0.9649122807017544
+   ],
+   "ca_on_vs_pt4bit_off": [
+    3.365966796875,
+    0.9122807017543859
+   ],
+   "pt4bit_on_vs_pt4bit_off": [
+    3.249114990234375,
+    0.9473684210526315
+   ],
+   "delta_corr_ca_vs_pt4bit": 0.9839720726013184,
+   "delta_corr_ca_vs_pt_fp32": 0.8284144997596741,
+   "delta_corr_pt4bit_vs_pt_fp32": 0.8427130579948425
+  }
+ ],
+ "load_seconds": {
+  "plain": 2.121517874998972,
+  "adapter": 2.105004125041887
+ },
+ "incremental_on_vs_pt_edited_last8": [
+  14.742849349975586,
+  0.75
+ ],
+ "incremental_on_vs_pt4bit_on_last8": [
+  0.90625,
+  1.0
+ ],
+ "incremental_on_vs_ca_full_last8": [
+  1.015625,
+  1.0
+ ],
+ "toggle_off_on_off_first_vs_last_maxabs": 0.0,
+ "toggle_on_vs_pt_edited": [
+  8.201848983764648,
+  0.7222222222222222
+ ]
+}

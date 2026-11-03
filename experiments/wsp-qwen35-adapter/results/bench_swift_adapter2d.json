@@ -1,0 +1,42 @@
+{
+  "adapter_on" : {
+    "decode_seconds" : [
+      1.124711542041041,
+      1.1398223339347169,
+      1.1424810419557616
+    ],
+    "prefill_tok_per_s" : 3440.8447934633864,
+    "prefill_seconds" : [
+      0.14871737500652671,
+      0.14880066690966487,
+      0.14886549999937415
+    ],
+    "decode_tok_per_s" : 224.59640628050929
+  },
+  "adapter_off" : {
+    "decode_tok_per_s" : 226.40156162695772,
+    "decode_seconds" : [
+      1.1303882079664618,
+      1.1307342500658706,
+      1.1334922909736633
+    ],
+    "prefill_tok_per_s" : 3412.1656217822951,
+    "prefill_seconds" : [
+      0.14942704199347645,
+      0.15005133301019669,
+      0.15016674995422363
+    ]
+  },
+  "decode_steps" : 256,
+  "prefill_len" : 512,
+  "adapter_states" : true,
+  "load_seconds" : 4.5805508330231532,
+  "toggle" : {
+    "n_toggles" : 20,
+    "step_after_toggle_ms_median" : 3.9857919327914715,
+    "steady_step_ms_median" : 3.9870420005172491,
+    "set_adapter_ms_median" : 0.021874904632568359,
+    "set_adapter_ms_max" : 0.024499953724443913
+  },
+  "reps" : 3
+}

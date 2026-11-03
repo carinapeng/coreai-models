@@ -1,0 +1,10 @@
+exports/
+data/
+jobs/
+swiftgen/.build*/
+.gradeenv/
+__pycache__/
+adapter.bin
+results/*.jsonl
+results/*.npz
+results/*.bin

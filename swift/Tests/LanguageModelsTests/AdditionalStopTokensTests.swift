@@ -232,4 +232,33 @@ struct AdditionalStopTokensTests {
             from: dir, tokenizer: MockTokenizer(vocab: ["<eos>": 2, "<|im_end|>": 4]))
         #expect(ids.isEmpty)
     }
+
+    // MARK: - metadata.json eos_token_ids
+
+    @Test("metadata.json eos_token_ids are included, main EOS filtered")
+    func metadataEosTokenIds() throws {
+        let dir = try Self.tokenizerDir(config: #"{ "eos_token": "<eos>" }"#)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{ "eos_token_ids": [2, 3, 50] }"#.write(
+            to: dir.appending(path: "metadata.json"),
+            atomically: true, encoding: .utf8
+        )
+        let ids = LanguageConfig.additionalStopTokenIds(from: dir, tokenizer: Self.tokenizer())
+        #expect(ids == [3, 50])
+    }
+
+    @Test("metadata.json eos_token_ids are read without tokenizer_config.json")
+    func metadataEosTokenIdsWithoutConfig() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(
+            path: "AdditionalStopTokensTests-\(UUID().uuidString)"
+        )
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{ "eos_token_ids": [1, 50] }"#.write(
+            to: dir.appending(path: "metadata.json"),
+            atomically: true, encoding: .utf8
+        )
+        let ids = LanguageConfig.additionalStopTokenIds(from: dir, tokenizer: Self.tokenizer())
+        #expect(ids == [1, 50])
+    }
 }

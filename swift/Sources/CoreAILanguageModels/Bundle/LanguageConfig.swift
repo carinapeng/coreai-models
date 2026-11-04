@@ -210,6 +210,9 @@ public struct LanguageConfig: Codable, Sendable, Equatable {
     /// tokenizer_config.json, so this is where the exported bundle's
     /// `<end_of_turn>` (ID 106) is found.
     ///
+    /// Reads `eos_token_ids` from the bundle's tokenizer `metadata.json`, when
+    /// present.
+    ///
     /// Best-effort on the config: if tokenizer_config.json is missing or can't be
     /// parsed the config-derived IDs are skipped.
     ///
@@ -316,6 +319,23 @@ public struct LanguageConfig: Codable, Sendable, Equatable {
                     if id32 != mainEos && turnEndPatterns.contains(where: { lower.contains($0) }) {
                         result.insert(id32)
                     }
+                }
+            }
+        }
+
+        // 6. Include the bundle's `eos_token_ids` from metadata.json. The export
+        //    records every stop ID the model declares (e.g. Gemma's
+        //    <|tool_response>, ID 50), including ones the tokenizer files don't
+        //    mark as turn-ending.
+        let metadataURL = tokenizerDir.appending(path: "metadata.json")
+        if let metadataData = try? Data(contentsOf: metadataURL),
+            let metadataJSON = try? JSONSerialization.jsonObject(with: metadataData) as? [String: Any],
+            let eosIds = metadataJSON["eos_token_ids"] as? [Int]
+        {
+            for id in eosIds {
+                let id32 = Int32(id)
+                if id32 != mainEos {
+                    result.insert(id32)
                 }
             }
         }

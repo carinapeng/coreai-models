@@ -160,11 +160,13 @@ Run the model with its draft head through `llm-runner --speculative`:
 llm-runner --model <bundle> --sampling-strategy greedy --speculative --prompt "..."
 ```
 
-The head and the target live in the same bundle, so `--speculative` takes no separate path. The
-output is token for token what greedy decoding of the target alone produces; the head only changes
-how many tokens one verify pass of the target commits. The runner needs greedy decoding, a bundle
-with a `drafter` of kind `mtp`, and a target exported with `--emit-hidden-states`, and it says which
-of the three is missing. `--speculative` combines with `--prompt-lookup` (a block whose recent
+The head and the target live in the same bundle, so `--speculative` takes no separate path. Under
+greedy decoding the output is token for token what greedy decoding of the target alone produces;
+with `--temperature` it follows the target's distribution, since each drafted token is accepted with
+the target's probability for it. The head only changes how many tokens one verify pass of the
+target commits. The runner needs a bundle with a `drafter` of kind `mtp` and a target exported with
+`--emit-hidden-states`, and it says which is missing. The head drafts the most likely token, so it
+is accepted less often as the temperature rises. `--speculative` combines with `--prompt-lookup` (a block whose recent
 tokens recur in the context is proposed by lookup, any other by the head) and with `--json-schema`.
 `--num-draft-tokens` sets the drafts per round; by default a round drafts one less than the target's
 verify tile is wide, and `--no-align-proposals` drops that limit. `--drafter-top-k` sets how many

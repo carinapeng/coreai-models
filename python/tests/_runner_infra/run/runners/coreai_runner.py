@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from collections.abc import Coroutine
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
 from typing_extensions import Self, override
@@ -24,6 +25,22 @@ if TYPE_CHECKING:
 else:
     # NDArray is needed at runtime inside this module to construct inputs.
     from coreai.runtime import InferenceFunction, NDArray
+
+_T = TypeVar("_T")
+# Event loop shared by every CoreaiRuntime sync entry point for the lifetime
+# of the process. An executable() context delivers completions to the loop it
+# was opened on, possibly after the awaiting call has returned or when the
+# runtime is garbage-collected. A per-call asyncio.run() loop is closed by then,
+# and the late completion aborts the process ("Failed to call_soon"); a loop
+# that is never closed just queues it.
+_loop_runner: asyncio.Runner | None = None
+
+
+def _run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
+    global _loop_runner
+    if _loop_runner is None:
+        _loop_runner = asyncio.Runner()
+    return _loop_runner.run(coro)
 
 
 class CoreaiRuntime:
@@ -53,9 +70,9 @@ class CoreaiRuntime:
         self._output_names = output_names
         self._exit_stack = AsyncExitStack()
         try:
-            self._function = asyncio.run(self._async_load_model(coreai_program, asset_path))
+            self._function = _run_sync(self._async_load_model(coreai_program, asset_path))
         except RuntimeError as error:
-            asyncio.run(self._exit_stack.aclose())
+            _run_sync(self._exit_stack.aclose())
             # Imported here: testing_utils pulls in the whole export stack.
             from ...testing_utils import skip_if_neural_engine_refused
 
@@ -87,7 +104,7 @@ class CoreaiRuntime:
         return outputs
 
     def forward(self: Self, named_inputs: dict[str, Tensor]) -> dict[str, torch.Tensor]:
-        return asyncio.run(self._async_forward(named_inputs))
+        return _run_sync(self._async_forward(named_inputs))
 
     async def aclose(self: Self) -> None:
         """Release the asset.executable() context held in ``_exit_stack``.
@@ -102,7 +119,7 @@ class CoreaiRuntime:
 
     def close(self: Self) -> None:
         """Synchronous counterpart to :py:meth:`aclose` for sync callers."""
-        asyncio.run(self.aclose())
+        _run_sync(self.aclose())
 
     async def __aenter__(self: Self) -> Self:
         return self
